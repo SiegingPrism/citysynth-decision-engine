@@ -235,7 +235,48 @@ function Building3D({
           decay={2}
         />
       )}
+
+      {/* Fire-station signage: red roof beacon + bay doors */}
+      {b.kind === "firestation" && !state.collapsed && (
+        <>
+          {/* Bright red roof */}
+          <mesh position={[0, buildingHeight + 0.8 + 0.4, 0]}>
+            <boxGeometry args={[b.w * 1.02, 0.8, b.d * 1.02]} />
+            <meshStandardMaterial color="#dc2626" emissive="#7f1d1d" emissiveIntensity={0.4} />
+          </mesh>
+          {/* Rotating beacon */}
+          <FireStationBeacon height={buildingHeight + 2.2} />
+          {/* Bay doors (yellow stripes) */}
+          <mesh position={[0, 3, b.d / 2 + 0.06]}>
+            <planeGeometry args={[b.w * 0.7, 5]} />
+            <meshBasicMaterial color="#fbbf24" />
+          </mesh>
+          {/* "FIRE" letter glow strip */}
+          <mesh position={[0, buildingHeight - 1.5 + 0.8, b.d / 2 + 0.07]}>
+            <planeGeometry args={[b.w * 0.6, 1.2]} />
+            <meshBasicMaterial color="#fef08a" />
+          </mesh>
+        </>
+      )}
     </group>
+  );
+}
+
+function FireStationBeacon({ height }: { height: number }) {
+  const ref = useRef<THREE.PointLight>(null);
+  useFrame(({ clock }) => {
+    if (!ref.current) return;
+    const t = clock.getElapsedTime();
+    ref.current.intensity = 1.5 + Math.sin(t * 6) * 1.2;
+  });
+  return (
+    <>
+      <mesh position={[0, height, 0]}>
+        <sphereGeometry args={[0.6, 12, 12]} />
+        <meshBasicMaterial color="#ef4444" />
+      </mesh>
+      <pointLight ref={ref} position={[0, height, 0]} color="#ef4444" intensity={2} distance={60} />
+    </>
   );
 }
 

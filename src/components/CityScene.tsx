@@ -882,7 +882,485 @@ function EvacuationArrows({ routes }: { routes: { a: Vec2; b: Vec2 }[] }) {
   );
 }
 
-/* ----------------------------- ground & ambience ----------------------------- */
+/* ------------------------- FIRE TRUCKS (dispatch + spray) ------------------------- */
+
+type TruckPath = {
+  station: Vec2;
+  fire: Vec2;
+  // detour waypoint so the truck follows roads (Manhattan path)
+  via: Vec2;
+  totalLen: number;
+  // per-truck phase offset so they don't overlap
+  phase: number;
+};
+
+function FireTrucks({
+  fire,
+  stations,
+  playSec,
+}: {
+  fire: NonNullable<SimSnapshot["fire"]>;
+  stations: Building[];
+  playSec: number;
+}) {
+  // Build a path per station — Manhattan route via an L-bend so it follows the grid.
+  const paths = useMemo<TruckPath[]>(() => {
+    return stations.map((s, i) => {
+      const via: Vec2 = { x: fire.pos.x, z: s.pos.z };
+      const seg1 = Math.abs(via.x - s.pos.x) + Math.abs(via.z - s.pos.z);
+      const seg2 = Math.abs(fire.pos.x - via.x) + Math.abs(fire.pos.z - via.z);
+      return {
+        station: s.pos,
+        fire: fire.pos,
+        via,
+        totalLen: seg1 + seg2,
+        phase: i * 0.6,
+      };
+    });
+  }, [stations, fire.pos.x, fire.pos.z]);
+
+  // Each truck takes ~12 seconds to drive there, then sprays for 6 sec, then idles.
+  const DRIVE_DURATION = 12;
+  const SPRAY_DURATION = 8;
+  const TOTAL = DRIVE_DURATION + SPRAY_DURATION;
+
+  // Spray particles (instanced)
+  const sprayRef = useRef<THREE.InstancedMesh>(null);
+  const SPRAY_PER_TRUCK = 14;
+  const sprayTotal = Math.max(1, paths.length * SPRAY_PER_TRUCK);
+  const sprayDummy = useMemo(() => new THREE.Object3D(), []);
+
+  useFrame(({ clock }) => {
+    if (!sprayRef.current) return;
+    const t = clock.getElapsedTime();
+    let i = 0;
+    paths.forEach((p, pi) => {
+      const local = Math.max(0, playSec - p.phase);
+      const driving = local < DRIVE_DURATION;
+      if (driving) {
+        // hide sprays during drive — push offscreen
+        for (let n = 0; n < SPRAY_PER_TRUCK; n++) {
+          sprayDummy.position.set(0, -200, 0);
+          sprayDummy.scale.setScalar(0.001);
+          sprayDummy.updateMatrix();
+          sprayRef.current!.setMatrixAt(i, sprayDummy.matrix);
+          i++;
+        }
+        return;
+      }
+      // truck has parked near fire — spray water in arc toward epicenter
+      const sprayElapsed = local - DRIVE_DURATION;
+      const sprayActive = sprayElapsed < SPRAY_DURATION;
+      // Park position: just outside the fire radius along the path
+      const dx = p.fire.x - p.via.x;
+      const dz = p.fire.z - p.via.z;
+      const segLen = Math.max(1, Math.sqrt(dx * dx + dz * dz));
+      const parkDist = Math.max(8, fire.radius * 0.85);
+      const parkRatio = Math.max(0, 1 - parkDist / segLen);
+      const px = p.via.x + dx * parkRatio;
+      const pz = p.via.z + dz * parkRatio;
+
+      for (let n = 0; n < SPRAY_PER_TRUCK; n++) {
+        if (!sprayActive) {
+          sprayDummy.position.set(0, -200, 0);
+          sprayDummy.scale.setScalar(0.001);
+        } else {
+          // arc particle — life cycles
+          const seed = pi * 11 + n;
+          const life = ((t * 1.6 + seed * 0.31) % 1);
+          // arc from truck nozzle (height 3) to fire epicenter
+          const ax = px + (p.fire.x - px) * life;
+          const az = pz + (p.fire.z - pz) * life;
+          const ay = 3 + Math.sin(life * Math.PI) * 8 - life * 0.5;
+          sprayDummy.position.set(ax, ay, az);
+          sprayDummy.scale.setScalar(0.6 + (1 - life) * 1.2);
+        }
+        sprayDummy.updateMatrix();
+        sprayRef.current!.setMatrixAt(i, sprayDummy.matrix);
+        i++;
+      }
+    });
+    sprayRef.current.count = sprayTotal;
+    sprayRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <group>
+      {paths.map((p, i) => (
+        <FireTruck
+          key={i}
+          path={p}
+          driveDuration={DRIVE_DURATION}
+          totalDuration={TOTAL}
+          playSec={playSec}
+          fireRadius={fire.radius}
+        />
+      ))}
+
+      {/* Water spray particles */}
+      <instancedMesh ref={sprayRef} args={[undefined, undefined, sprayTotal]}>
+        <sphereGeometry args={[0.7, 8, 8]} />
+        <meshBasicMaterial
+          color="#7dd3fc"
+          transparent
+          opacity={0.85}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </instancedMesh>
+    </group>
+  );
+}
+
+function FireTruck({
+  path,
+  driveDuration,
+  totalDuration,
+  playSec,
+  fireRadius,
+}: {
+  path: TruckPath;
+  driveDuration: number;
+  totalDuration: number;
+  playSec: number;
+  fireRadius: number;
+}) {
+  const ref = useRef<THREE.Group>(null);
+  const beaconRef = useRef<THREE.PointLight>(null);
+
+  useFrame(({ clock }) => {
+    if (!ref.current) return;
+    const t = clock.getElapsedTime();
+
+    const local = Math.max(0, playSec - path.phase) % (totalDuration + 4); // small idle gap
+    let x: number;
+    let z: number;
+    let yaw = 0;
+
+    if (local < driveDuration) {
+      // animate along Manhattan path: station -> via -> (parkDist before fire)
+      const ratio = local / driveDuration;
+      const seg1Len = Math.abs(path.via.x - path.station.x) + Math.abs(path.via.z - path.station.z);
+      const dx = path.fire.x - path.via.x;
+      const dz = path.fire.z - path.via.z;
+      const segLen2Full = Math.max(1, Math.sqrt(dx * dx + dz * dz));
+      const parkDist = Math.max(8, fireRadius * 0.85);
+      const parkRatio = Math.max(0, 1 - parkDist / segLen2Full);
+      const seg2Len = segLen2Full * parkRatio;
+      const total = seg1Len + seg2Len;
+      const traveled = ratio * total;
+
+      if (traveled < seg1Len) {
+        const r = traveled / Math.max(1, seg1Len);
+        x = path.station.x + (path.via.x - path.station.x) * r;
+        z = path.station.z + (path.via.z - path.station.z) * r;
+        yaw = Math.atan2(path.via.z - path.station.z, path.via.x - path.station.x);
+      } else {
+        const r = (traveled - seg1Len) / Math.max(1, seg2Len);
+        const px = path.via.x + dx * parkRatio;
+        const pz = path.via.z + dz * parkRatio;
+        x = path.via.x + (px - path.via.x) * r;
+        z = path.via.z + (pz - path.via.z) * r;
+        yaw = Math.atan2(dz, dx);
+      }
+    } else {
+      // parked
+      const dx = path.fire.x - path.via.x;
+      const dz = path.fire.z - path.via.z;
+      const segLen2Full = Math.max(1, Math.sqrt(dx * dx + dz * dz));
+      const parkDist = Math.max(8, fireRadius * 0.85);
+      const parkRatio = Math.max(0, 1 - parkDist / segLen2Full);
+      x = path.via.x + dx * parkRatio;
+      z = path.via.z + dz * parkRatio;
+      yaw = Math.atan2(dz, dx);
+    }
+
+    ref.current.position.set(x, 1.4, z);
+    ref.current.rotation.y = -yaw;
+
+    if (beaconRef.current) {
+      beaconRef.current.intensity = 1.5 + Math.sin(t * 14) * 1.2;
+    }
+  });
+
+  return (
+    <group ref={ref}>
+      {/* Cab */}
+      <mesh castShadow position={[1.6, 0.3, 0]}>
+        <boxGeometry args={[2.4, 2.2, 2.4]} />
+        <meshStandardMaterial color="#dc2626" metalness={0.4} roughness={0.45} />
+      </mesh>
+      {/* Windshield */}
+      <mesh position={[2.6, 0.7, 0]}>
+        <boxGeometry args={[0.4, 1.2, 2.0]} />
+        <meshStandardMaterial color="#0ea5e9" metalness={0.6} roughness={0.2} emissive="#0ea5e9" emissiveIntensity={0.2} />
+      </mesh>
+      {/* Tank body */}
+      <mesh castShadow position={[-1.2, 0.4, 0]}>
+        <boxGeometry args={[3.6, 2.4, 2.4]} />
+        <meshStandardMaterial color="#b91c1c" metalness={0.5} roughness={0.4} />
+      </mesh>
+      {/* Yellow safety stripe */}
+      <mesh position={[-1.2, -0.2, 1.21]}>
+        <planeGeometry args={[3.6, 0.4]} />
+        <meshBasicMaterial color="#fde047" />
+      </mesh>
+      <mesh position={[-1.2, -0.2, -1.21]} rotation={[0, Math.PI, 0]}>
+        <planeGeometry args={[3.6, 0.4]} />
+        <meshBasicMaterial color="#fde047" />
+      </mesh>
+      {/* Hose / nozzle pointing forward */}
+      <mesh position={[3.0, 1.0, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.18, 0.18, 1.2, 8]} />
+        <meshStandardMaterial color="#374151" />
+      </mesh>
+      {/* Roof beacon */}
+      <mesh position={[1.6, 1.7, 0]}>
+        <boxGeometry args={[1.4, 0.35, 1.6]} />
+        <meshStandardMaterial color="#1f2937" />
+      </mesh>
+      <mesh position={[1.6, 1.95, 0.5]}>
+        <sphereGeometry args={[0.25, 10, 10]} />
+        <meshBasicMaterial color="#ef4444" />
+      </mesh>
+      <mesh position={[1.6, 1.95, -0.5]}>
+        <sphereGeometry args={[0.25, 10, 10]} />
+        <meshBasicMaterial color="#3b82f6" />
+      </mesh>
+      <pointLight ref={beaconRef} position={[1.6, 2.4, 0]} color="#ef4444" intensity={2} distance={30} />
+      {/* Wheels */}
+      {[
+        [2.2, -0.8, 1.3],
+        [2.2, -0.8, -1.3],
+        [-0.5, -0.8, 1.3],
+        [-0.5, -0.8, -1.3],
+        [-2.4, -0.8, 1.3],
+        [-2.4, -0.8, -1.3],
+      ].map((p, i) => (
+        <mesh key={i} position={p as [number, number, number]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.55, 0.55, 0.5, 12]} />
+          <meshStandardMaterial color="#1f2937" />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/* ------------------------- FLOOD EXTRAS (rain + boats + debris) ------------------------- */
+
+function RainParticles({
+  center,
+  radius,
+}: {
+  center: Vec2;
+  radius: number;
+}) {
+  const COUNT = 600;
+  const ref = useRef<THREE.Points>(null);
+  const positions = useMemo(() => {
+    const arr = new Float32Array(COUNT * 3);
+    for (let i = 0; i < COUNT; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * radius;
+      arr[i * 3] = center.x + Math.cos(a) * r;
+      arr[i * 3 + 1] = Math.random() * 80;
+      arr[i * 3 + 2] = center.z + Math.sin(a) * r;
+    }
+    return arr;
+  }, [center.x, center.z, radius]);
+
+  useFrame((_, dt) => {
+    if (!ref.current) return;
+    const pos = ref.current.geometry.attributes.position as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    for (let i = 0; i < COUNT; i++) {
+      arr[i * 3 + 1] -= 60 * dt;
+      if (arr[i * 3 + 1] < 0) {
+        arr[i * 3 + 1] = 80;
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.sqrt(Math.random()) * radius;
+        arr[i * 3] = center.x + Math.cos(a) * r;
+        arr[i * 3 + 2] = center.z + Math.sin(a) * r;
+      }
+    }
+    pos.needsUpdate = true;
+  });
+
+  return (
+    <points ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <pointsMaterial color="#bae6fd" size={0.8} transparent opacity={0.55} sizeAttenuation />
+    </points>
+  );
+}
+
+function FloodRipples({ center, radius }: { center: Vec2; radius: number }) {
+  // Three expanding rings that loop
+  const rings = useRef<THREE.Mesh[]>([]);
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    rings.current.forEach((m, i) => {
+      if (!m) return;
+      const phase = ((t * 0.25 + i / 3) % 1);
+      const s = 0.2 + phase * 1.0;
+      m.scale.set(s, s, s);
+      const mat = m.material as THREE.MeshBasicMaterial;
+      mat.opacity = (1 - phase) * 0.5;
+    });
+  });
+  return (
+    <group position={[center.x, 0.2, center.z]}>
+      {[0, 1, 2].map((i) => (
+        <mesh
+          key={i}
+          ref={(el) => {
+            if (el) rings.current[i] = el;
+          }}
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          <ringGeometry args={[radius * 0.95, radius, 96]} />
+          <meshBasicMaterial color="#bae6fd" transparent opacity={0.4} side={THREE.DoubleSide} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function RescueBoats({
+  flood,
+}: {
+  flood: NonNullable<SimSnapshot["flood"]>;
+}) {
+  const COUNT = 4;
+  const refs = useRef<THREE.Group[]>([]);
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    refs.current.forEach((g, i) => {
+      if (!g) return;
+      const seed = i * 1.7;
+      const angle = t * 0.18 + seed;
+      const r = flood.radius * (0.35 + (i % 3) * 0.18);
+      g.position.x = flood.pos.x + Math.cos(angle) * r;
+      g.position.z = flood.pos.z + Math.sin(angle) * r;
+      g.position.y = flood.waterLevel + Math.sin(t * 2 + seed) * 0.15;
+      g.rotation.y = -angle + Math.PI / 2;
+    });
+  });
+  return (
+    <>
+      {Array.from({ length: COUNT }).map((_, i) => (
+        <group
+          key={i}
+          ref={(el) => {
+            if (el) refs.current[i] = el;
+          }}
+        >
+          {/* Hull */}
+          <mesh castShadow>
+            <boxGeometry args={[5, 0.6, 1.8]} />
+            <meshStandardMaterial color="#fb923c" metalness={0.3} roughness={0.5} />
+          </mesh>
+          {/* Cabin */}
+          <mesh position={[-0.6, 0.6, 0]}>
+            <boxGeometry args={[1.6, 0.8, 1.4]} />
+            <meshStandardMaterial color="#f8fafc" />
+          </mesh>
+          {/* Light */}
+          <pointLight position={[2.2, 1, 0]} color="#fde68a" intensity={0.8} distance={20} />
+        </group>
+      ))}
+    </>
+  );
+}
+
+function FloodDebris({ flood }: { flood: NonNullable<SimSnapshot["flood"]> }) {
+  const COUNT = 30;
+  const ref = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const seeds = useMemo(
+    () =>
+      Array.from({ length: COUNT }).map(() => ({
+        a: Math.random() * Math.PI * 2,
+        r: Math.random(),
+        s: 0.4 + Math.random() * 0.6,
+        spin: (Math.random() - 0.5) * 0.5,
+      })),
+    [],
+  );
+
+  useFrame(({ clock }) => {
+    if (!ref.current) return;
+    const t = clock.getElapsedTime();
+    seeds.forEach((d, i) => {
+      const a = d.a + t * 0.12;
+      const r = d.r * flood.radius * 0.95;
+      const x = flood.pos.x + Math.cos(a) * r;
+      const z = flood.pos.z + Math.sin(a) * r;
+      dummy.position.set(x, flood.waterLevel + 0.15 + Math.sin(t * 1.5 + i) * 0.1, z);
+      dummy.rotation.y = a + t * d.spin;
+      dummy.scale.setScalar(d.s);
+      dummy.updateMatrix();
+      ref.current!.setMatrixAt(i, dummy.matrix);
+    });
+    ref.current.count = COUNT;
+    ref.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={ref} args={[undefined, undefined, COUNT]}>
+      <boxGeometry args={[2, 0.3, 1]} />
+      <meshStandardMaterial color="#3a2418" roughness={0.95} />
+    </instancedMesh>
+  );
+}
+
+/* ------------------------- ember sparks for fire ------------------------- */
+
+function EmberSparks({ fire }: { fire: NonNullable<SimSnapshot["fire"]> }) {
+  const COUNT = 200;
+  const ref = useRef<THREE.Points>(null);
+  const positions = useMemo(() => {
+    const arr = new Float32Array(COUNT * 3);
+    for (let i = 0; i < COUNT; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * fire.radius * 0.9;
+      arr[i * 3] = fire.pos.x + Math.cos(a) * r;
+      arr[i * 3 + 1] = Math.random() * 60;
+      arr[i * 3 + 2] = fire.pos.z + Math.sin(a) * r;
+    }
+    return arr;
+  }, [fire.pos.x, fire.pos.z, fire.radius]);
+
+  useFrame((_, dt) => {
+    if (!ref.current) return;
+    const pos = ref.current.geometry.attributes.position as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    for (let i = 0; i < COUNT; i++) {
+      arr[i * 3 + 1] += (15 + (i % 5) * 4) * dt;
+      arr[i * 3] += Math.sin(arr[i * 3 + 1] * 0.05 + i) * 0.05;
+      if (arr[i * 3 + 1] > 80) {
+        arr[i * 3 + 1] = 0;
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * fire.radius * 0.9;
+        arr[i * 3] = fire.pos.x + Math.cos(a) * r;
+        arr[i * 3 + 2] = fire.pos.z + Math.sin(a) * r;
+      }
+    }
+    pos.needsUpdate = true;
+  });
+
+  return (
+    <points ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <pointsMaterial color="#fb923c" size={1.2} transparent opacity={0.9} sizeAttenuation depthWrite={false} blending={THREE.AdditiveBlending} />
+    </points>
+  );
+}
+
 
 function Ground({ size }: { size: number }) {
   return (

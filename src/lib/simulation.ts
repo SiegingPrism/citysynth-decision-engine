@@ -177,9 +177,11 @@ export function simulate(
   crisis: CrisisMode,
   tMinutes: number,
   baseHour = new Date().getHours(),
+  crisisStartMin = 0,
 ): SimSnapshot {
   const hour = (baseHour + tMinutes / 60 + 24) % 24;
   const demand = demandAt(hour);
+  const elapsed = Math.max(0, tMinutes - crisisStartMin);
 
   // Signal efficiency: closer to 1 timing => optimal; deviation reduces flow
   const signalPenalty = Math.abs(controls.signalTiming - 1) * 0.35;

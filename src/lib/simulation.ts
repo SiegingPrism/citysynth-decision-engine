@@ -11,7 +11,7 @@ export type Building = {
   w: number;
   d: number;
   h: number;
-  kind: "office" | "residential" | "campus" | "cafeteria" | "lecture" | "library" | "parking";
+  kind: "office" | "residential" | "campus" | "cafeteria" | "lecture" | "library" | "parking" | "firestation";
   capacity: number;
   label?: string;
 };
@@ -89,7 +89,7 @@ const rand = (seed: number) => {
 
 export function buildCity(seed = 7): CityModel {
   const r = rand(seed);
-  const size = 600;
+  const size = 1100;
   const blockSize = 60;
   const half = size / 2;
 
@@ -151,6 +151,22 @@ export function buildCity(seed = 7): CityModel {
     { pos: { x: 250, z: -60 }, w: 45, d: 30, h: 8, kind: "parking", capacity: 400, label: "Parking" },
   ];
   campus.forEach((b, i) => buildings.push({ id: `c-${i}`, ...b }));
+
+  // Fire stations spread across the larger map
+  const fireStations: Array<Omit<Building, "id">> = [
+    { pos: { x: -360, z: -300 }, w: 38, d: 28, h: 12, kind: "firestation", capacity: 40, label: "Fire Station 1" },
+    { pos: { x: 360, z: 240 }, w: 38, d: 28, h: 12, kind: "firestation", capacity: 40, label: "Fire Station 2" },
+    { pos: { x: -300, z: 360 }, w: 38, d: 28, h: 12, kind: "firestation", capacity: 40, label: "Fire Station 3" },
+    { pos: { x: 240, z: -360 }, w: 38, d: 28, h: 12, kind: "firestation", capacity: 40, label: "Fire Station 4" },
+  ];
+  // Remove any pre-existing block buildings overlapping the fire station footprints
+  fireStations.forEach((fs, i) => {
+    const idx = buildings.findIndex(
+      (b) => Math.abs(b.pos.x - fs.pos.x) < 35 && Math.abs(b.pos.z - fs.pos.z) < 35,
+    );
+    if (idx >= 0) buildings.splice(idx, 1);
+    buildings.push({ id: `fs-${i}`, ...fs });
+  });
 
   return { size, buildings, roads, intersections, campusBounds };
 }

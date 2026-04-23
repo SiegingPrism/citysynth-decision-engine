@@ -423,15 +423,14 @@ function Vehicles({ city, snapshot }: { city: CityModel; snapshot: SimSnapshot }
     ],
     [],
   );
-  const colorAttr = useMemo(() => {
-    const arr = new Float32Array(Math.max(1, data.length) * 3);
+
+  // Set per-instance colors once when data changes
+  useEffect(() => {
+    if (!ref.current) return;
     data.forEach((d, i) => {
-      const c = palette[d.color];
-      arr[i * 3] = c.r;
-      arr[i * 3 + 1] = c.g;
-      arr[i * 3 + 2] = c.b;
+      ref.current!.setColorAt(i, palette[d.color]);
     });
-    return new THREE.InstancedBufferAttribute(arr, 3);
+    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
   }, [data, palette]);
 
   useFrame(({ clock }) => {
@@ -459,8 +458,7 @@ function Vehicles({ city, snapshot }: { city: CityModel; snapshot: SimSnapshot }
       args={[undefined, undefined, Math.max(1, data.length)]}
     >
       <boxGeometry args={[3.6, 1.6, 1.8]} />
-      <meshStandardMaterial vertexColors metalness={0.6} roughness={0.4} />
-      <primitive attach="geometry-attributes-color" object={colorAttr} />
+      <meshStandardMaterial color="#ffffff" metalness={0.6} roughness={0.4} />
     </instancedMesh>
   );
 }

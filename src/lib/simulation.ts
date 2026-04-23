@@ -54,6 +54,13 @@ export type SimControls = {
 
 export type CrisisMode = "none" | "flood" | "fire" | "surge";
 
+export type CrisisEpicenter = {
+  pos: Vec2;
+  radius: number;       // current active radius
+  predictedRadius: number; // projected radius in ~30 min
+  level: number;        // 0..1 severity
+};
+
 export type SimSnapshot = {
   tMinutes: number;            // minutes from "now"
   hour: number;                // 0..23
@@ -65,6 +72,11 @@ export type SimSnapshot = {
   riskZones: { pos: Vec2; radius: number; level: number }[];
   evacuationRoutes: { a: Vec2; b: Vec2 }[];
   crisis: CrisisMode;
+  // Crisis-specific
+  fire?: CrisisEpicenter;
+  flood?: CrisisEpicenter & { waterLevel: number };
+  surge?: CrisisEpicenter;
+  crisisElapsedMin: number;     // minutes since crisis was activated (player-facing)
 };
 
 const rand = (seed: number) => {

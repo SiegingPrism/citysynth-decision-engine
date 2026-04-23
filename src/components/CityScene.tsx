@@ -1627,8 +1627,10 @@ export function CityScene(props: Props) {
     hoveredRoadId,
     setHoveredRoadId,
     crisisPlaySeconds,
+    flyTo,
   } = props;
   const isNight = snapshot.hour < 6.5 || snapshot.hour > 19;
+  const signalTiming = 1; // visual cycle speed only — sim uses controls.signalTiming for math
 
   // Sky color shifts with crisis
   let sky = isNight ? "#06080f" : "#0e1525";
@@ -1667,8 +1669,10 @@ export function CityScene(props: Props) {
       <Trees city={city} />
       <BuildingsLayer city={city} snapshot={snapshot} playSec={crisisPlaySeconds} />
       <Vehicles city={city} snapshot={snapshot} />
+      <TrafficLights city={city} signalTiming={signalTiming} />
 
       {/* Crisis layers */}
+      {snapshot.fire && <Helicopter target={snapshot.fire.pos} />}
       {snapshot.fire && (
         <>
           <FireSystem
@@ -1701,11 +1705,12 @@ export function CityScene(props: Props) {
       )}
 
       <CrisisCameraFX snapshot={snapshot} />
+      <CameraRig flyTo={flyTo} citySize={city.size} />
 
       <OrbitControls
         enableDamping
         dampingFactor={0.08}
-        minDistance={150}
+        minDistance={50}
         maxDistance={1800}
         maxPolarAngle={Math.PI / 2.05}
         target={[0, 0, 0]}

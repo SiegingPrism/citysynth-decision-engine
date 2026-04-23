@@ -1403,7 +1403,201 @@ function CampusOverlay({
   );
 }
 
-/* ----------------------------- camera shake on crisis ----------------------------- */
+/* ------------------------- TRAFFIC LIGHTS ------------------------- */
+
+function TrafficLights({
+  city,
+  signalTiming,
+}: {
+  city: CityModel;
+  signalTiming: number;
+}) {
+  // Subset of intersections — every other one — to keep performance reasonable
+  const sample = useMemo(
+    () => city.intersections.filter((_, i) => i % 4 === 0),
+    [city.intersections],
+  );
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const colorObj = useMemo(() => new THREE.Color(), []);
+
+  useFrame(({ clock }) => {
+    if (!meshRef.current) return;
+    const t = clock.getElapsedTime() * (1 / signalTiming);
+    sample.forEach((i, idx) => {
+      const phase = (t * 0.5 + idx * 0.3) % 1;
+      const isGreen = phase < 0.5;
+      const isYellow = phase >= 0.45 && phase < 0.55;
+      colorObj.set(isYellow ? "#facc15" : isGreen ? "#22c55e" : "#ef4444");
+      dummy.position.set(i.pos.x + 4, 5, i.pos.z + 4);
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      meshRef.current!.setMatrixAt(idx, dummy.matrix);
+      meshRef.current!.setColorAt(idx, colorObj);
+    });
+    meshRef.current.count = sample.length;
+    meshRef.current.instanceMatrix.needsUpdate = true;
+    if (meshRef.current.instanceColor) {
+      meshRef.current.instanceColor.needsUpdate = true;
+    }
+  });
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, sample.length]}>
+      <sphereGeometry args={[0.6, 8, 8]} />
+      <meshBasicMaterial />
+    </instancedMesh>
+  );
+}
+
+/* ------------------------- HELICOPTER ------------------------- */
+
+function Helicopter({ target }: { target: Vec2 }) {
+  const ref = useRef<THREE.Group>(null);
+  const rotorRef = useRef<THREE.Mesh>(null);
+  const tailRotorRef = useRef<THREE.Mesh>(null);
+  const lightRef = useRef<THREE.SpotLight>(null);
+
+  useFrame(({ clock }) => {
+    if (!ref.current) return;
+    const t = clock.getElapsedTime();
+    const orbitR = 80;
+    const speed = 0.4;
+    const x = target.x + Math.cos(t * speed) * orbitR;
+    const z = target.z + Math.sin(t * speed) * orbitR;
+    const y = 70 + Math.sin(t * 1.2) * 3;
+    ref.current.position.set(x, y, z);
+    // face direction of motion
+    const yaw = Math.atan2(
+      Math.cos(t * speed),
+      -Math.sin(t * speed),
+    );
+    ref.current.rotation.y = yaw;
+
+    if (rotorRef.current) rotorRef.current.rotation.y = t * 30;
+    if (tailRotorRef.current) tailRotorRef.current.rotation.x = t * 40;
+
+    if (lightRef.current) {
+      lightRef.current.target.position.set(target.x, 0, target.z);
+      lightRef.current.target.updateMatrixWorld();
+    }
+  });
+
+  return (
+    <group ref={ref}>
+      {/* Body */}
+      <mesh castShadow>
+        <capsuleGeometry args={[1.6, 4, 6, 12]} />
+        <meshStandardMaterial color="#1f2937" metalness={0.6} roughness={0.4} />
+      </mesh>
+      {/* Cockpit glass */}
+      <mesh position={[0, 0.4, 2.6]}>
+        <sphereGeometry args={[1.4, 12, 12]} />
+        <meshStandardMaterial
+          color="#0ea5e9"
+          metalness={0.7}
+          roughness={0.15}
+          transparent
+          opacity={0.6}
+          emissive="#0ea5e9"
+          emissiveIntensity={0.3}
+        />
+      </mesh>
+      {/* Tail boom */}
+      <mesh position={[0, 0, -3]}>
+        <cylinderGeometry args={[0.3, 0.3, 4, 8]} rotation={[Math.PI / 2, 0, 0]} />
+        <meshStandardMaterial color="#374151" />
+      </mesh>
+      {/* Tail fin */}
+      <mesh position={[0, 0.6, -5]}>
+        <boxGeometry args={[0.2, 1.4, 1.2]} />
+        <meshStandardMaterial color="#374151" />
+      </mesh>
+      {/* Skids */}
+      <mesh position={[0, -1.6, 0]}>
+        <boxGeometry args={[3.2, 0.1, 4]} />
+        <meshStandardMaterial color="#1f2937" />
+      </mesh>
+      {/* Main rotor */}
+      <group position={[0, 1.4, 0]}>
+        <mesh ref={rotorRef}>
+          <boxGeometry args={[12, 0.08, 0.4]} />
+          <meshStandardMaterial color="#0f172a" transparent opacity={0.7} />
+        </mesh>
+      </group>
+      {/* Tail rotor */}
+      <group position={[0.5, 0.6, -5.2]}>
+        <mesh ref={tailRotorRef}>
+          <boxGeometry args={[0.05, 0.08, 1.6]} />
+          <meshStandardMaterial color="#0f172a" transparent opacity={0.7} />
+        </mesh>
+      </group>
+      {/* Beacon */}
+      <mesh position={[0, -1.7, 0]}>
+        <sphereGeometry args={[0.18, 8, 8]} />
+        <meshBasicMaterial color="#ef4444" />
+      </mesh>
+      {/* Search light cone */}
+      <spotLight
+        ref={lightRef}
+        position={[0, -1, 1]}
+        color="#fef9c3"
+        intensity={3}
+        angle={0.3}
+        penumbra={0.4}
+        distance={120}
+        castShadow={false}
+      />
+    </group>
+  );
+}
+
+/* ------------------------- CAMERA RIG (smooth fly-to) ------------------------- */
+
+function CameraRig({
+  flyTo,
+  citySize,
+}: {
+  flyTo: Props["flyTo"];
+  citySize: number;
+}) {
+  const { camera } = useThree();
+  const targetRef = useRef<THREE.Vector3 | null>(null);
+  const cameraTargetRef = useRef<THREE.Vector3 | null>(null);
+
+  useEffect(() => {
+    if (!flyTo) return;
+    const preset = flyTo.preset ?? "tactical";
+    const lookAt = new THREE.Vector3(flyTo.x, 0, flyTo.z);
+    let cam: THREE.Vector3;
+    if (preset === "overview") {
+      cam = new THREE.Vector3(citySize * 0.7, citySize * 0.7, citySize * 0.7);
+      lookAt.set(0, 0, 0);
+    } else if (preset === "street") {
+      cam = new THREE.Vector3(flyTo.x + 50, 35, flyTo.z + 50);
+    } else {
+      // tactical
+      cam = new THREE.Vector3(flyTo.x + 180, 220, flyTo.z + 180);
+    }
+    targetRef.current = lookAt;
+    cameraTargetRef.current = cam;
+  }, [flyTo, citySize]);
+
+  useFrame(() => {
+    if (!cameraTargetRef.current || !targetRef.current) return;
+    camera.position.lerp(cameraTargetRef.current, 0.04);
+    // we intentionally don't tween OrbitControls.target to avoid fighting the user.
+    // Instead, we look at the target while close.
+    const dist = camera.position.distanceTo(cameraTargetRef.current);
+    if (dist < 4) {
+      cameraTargetRef.current = null;
+      targetRef.current = null;
+    }
+  });
+
+  return null;
+}
+
 
 function CrisisCameraFX({ snapshot }: { snapshot: SimSnapshot }) {
   const { camera } = useThree();

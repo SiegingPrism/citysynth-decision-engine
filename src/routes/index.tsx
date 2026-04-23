@@ -44,9 +44,33 @@ function TwinPage() {
     closedRoadIds: [],
   });
   const [crisis, setCrisis] = useState<CrisisMode>("none");
+  const [crisisStartMin, setCrisisStartMin] = useState(0);
+  const [crisisPlaySeconds, setCrisisPlaySeconds] = useState(0);
   const [tMinutes, setTMinutes] = useState(0);
   const [autoplay, setAutoplay] = useState(false);
   const [hoveredRoadId, setHoveredRoadId] = useState<string | null>(null);
+
+  // Reset crisis play clock when crisis changes
+  useEffect(() => {
+    setCrisisPlaySeconds(0);
+    setCrisisStartMin(tMinutes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crisis]);
+
+  // Real-time clock that drives particle / damage animations whenever a crisis is active
+  useEffect(() => {
+    if (crisis === "none") return;
+    let last = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
+      setCrisisPlaySeconds((s) => s + dt);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [crisis]);
 
   // autoplay timeline
   const raf = useRef<number | null>(null);
@@ -69,8 +93,8 @@ function TwinPage() {
   }, [autoplay]);
 
   const snapshot = useMemo(
-    () => simulate(city, controls, crisis, tMinutes),
-    [city, controls, crisis, tMinutes],
+    () => simulate(city, controls, crisis, tMinutes, undefined, crisisStartMin),
+    [city, controls, crisis, tMinutes, crisisStartMin],
   );
 
   const forecast = useMemo(
@@ -113,6 +137,7 @@ function TwinPage() {
           onToggleRoad={toggleRoad}
           hoveredRoadId={hoveredRoadId}
           setHoveredRoadId={setHoveredRoadId}
+          crisisPlaySeconds={crisisPlaySeconds}
         />
       </div>
 

@@ -26,6 +26,7 @@ const BUILDING_COLORS: Record<string, [string, string]> = {
   lecture:     ["#3a5a78", "#5cc8ff"],
   library:     ["#4d3a78", "#a78bfa"],
   parking:     ["#2a3340", "#64748b"],
+  firestation: ["#7a1f1f", "#fde68a"],
 };
 
 function buildingDamageState(

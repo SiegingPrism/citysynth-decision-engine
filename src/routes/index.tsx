@@ -137,6 +137,7 @@ function TwinPage() {
           onToggleRoad={toggleRoad}
           hoveredRoadId={hoveredRoadId}
           setHoveredRoadId={setHoveredRoadId}
+          crisisPlaySeconds={crisisPlaySeconds}
         />
       </div>
 

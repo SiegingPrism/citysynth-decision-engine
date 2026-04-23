@@ -408,7 +408,8 @@ function Trees({ city }: { city: CityModel }) {
       s = (s * 1664525 + 1013904223) >>> 0;
       return s / 0xffffffff;
     };
-    for (let i = 0; i < 240; i++) {
+    const treeCount = Math.floor((city.size * city.size) / 1500);
+    for (let i = 0; i < treeCount; i++) {
       const x = (rnd() - 0.5) * city.size;
       const z = (rnd() - 0.5) * city.size;
       // place near intersections (offset onto sidewalk corners)
@@ -1441,20 +1442,20 @@ export function CityScene(props: Props) {
   return (
     <Canvas
       shadows
-      camera={{ position: [380, 320, 380], fov: 42, near: 1, far: 3000 }}
+      camera={{ position: [620, 520, 620], fov: 45, near: 1, far: 5000 }}
       gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping }}
     >
       <color attach="background" args={[sky]} />
-      <fog attach="fog" args={[sky, 600, 1500]} />
+      <fog attach="fog" args={[sky, 900, 2400]} />
       <ambientLight intensity={isNight ? 0.22 : 0.5} />
       <hemisphereLight args={["#5a7090", "#0a0e1a", isNight ? 0.25 : 0.45]} />
       <directionalLight
-        position={[280, 480, 200]}
+        position={[480, 780, 320]}
         intensity={isNight ? 0.35 : 0.95}
         color={snapshot.crisis === "fire" ? "#ffb18a" : isNight ? "#94a3b8" : "#ffffff"}
         castShadow
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
       />
 
       <Ground size={city.size} />
@@ -1473,13 +1474,29 @@ export function CityScene(props: Props) {
 
       {/* Crisis layers */}
       {snapshot.fire && (
-        <FireSystem
-          fire={snapshot.fire}
-          buildings={city.buildings}
-          playSec={crisisPlaySeconds}
-        />
+        <>
+          <FireSystem
+            fire={snapshot.fire}
+            buildings={city.buildings}
+            playSec={crisisPlaySeconds}
+          />
+          <EmberSparks fire={snapshot.fire} />
+          <FireTrucks
+            fire={snapshot.fire}
+            stations={city.buildings.filter((b) => b.kind === "firestation")}
+            playSec={crisisPlaySeconds}
+          />
+        </>
       )}
-      {snapshot.flood && <FloodSystem flood={snapshot.flood} />}
+      {snapshot.flood && (
+        <>
+          <FloodSystem flood={snapshot.flood} />
+          <RainParticles center={snapshot.flood.pos} radius={snapshot.flood.radius * 1.4} />
+          <FloodRipples center={snapshot.flood.pos} radius={snapshot.flood.radius} />
+          <FloodDebris flood={snapshot.flood} />
+          <RescueBoats flood={snapshot.flood} />
+        </>
+      )}
       {snapshot.surge && (
         <SurgeSystem surge={snapshot.surge} routes={snapshot.evacuationRoutes} />
       )}
@@ -1492,8 +1509,8 @@ export function CityScene(props: Props) {
       <OrbitControls
         enableDamping
         dampingFactor={0.08}
-        minDistance={120}
-        maxDistance={900}
+        minDistance={150}
+        maxDistance={1800}
         maxPolarAngle={Math.PI / 2.05}
         target={[0, 0, 0]}
       />

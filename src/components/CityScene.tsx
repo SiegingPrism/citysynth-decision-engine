@@ -1504,8 +1504,8 @@ function Helicopter({ target }: { target: Vec2 }) {
         />
       </mesh>
       {/* Tail boom */}
-      <mesh position={[0, 0, -3]}>
-        <cylinderGeometry args={[0.3, 0.3, 4, 8]} rotation={[Math.PI / 2, 0, 0]} />
+      <mesh position={[0, 0, -3]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.3, 0.3, 4, 8]} />
         <meshStandardMaterial color="#374151" />
       </mesh>
       {/* Tail fin */}

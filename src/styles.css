@@ -160,3 +160,8 @@
   50% { opacity: 0.3; }
 }
 .animate-blink { animation: blink 1.4s ease-in-out infinite; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.animate-spin-slow { animation: spin 6s linear infinite; }

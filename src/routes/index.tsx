@@ -4,6 +4,13 @@ import { CityScene } from "@/components/CityScene";
 import { ControlPanel } from "@/components/ControlPanel";
 import { ForecastChart } from "@/components/ForecastChart";
 import { AISuggestions } from "@/components/AISuggestions";
+import { MiniMap } from "@/components/MiniMap";
+import { ScenarioPresets, type Scenario } from "@/components/ScenarioPresets";
+import { CrisisOps } from "@/components/CrisisOps";
+import { EventLog } from "@/components/EventLog";
+import { ResilienceGauge } from "@/components/ResilienceGauge";
+import { AIVerdict } from "@/components/AIVerdict";
+import { IntroOverlay } from "@/components/IntroOverlay";
 import {
   buildCity,
   project,
@@ -12,8 +19,7 @@ import {
   type SimControls,
 } from "@/lib/simulation";
 import { Slider } from "@/components/ui/slider";
-import { Badge } from "@/components/ui/badge";
-import { Activity, MapPin, Wind, Users, Clock, Cpu } from "lucide-react";
+import { Activity, MapPin, Wind, Users, Clock, Cpu, Eye, Crosshair, Footprints } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -35,6 +41,8 @@ export const Route = createFileRoute("/")({
   component: TwinPage,
 });
 
+const BASE_HOUR = 7; // simulation reference hour for "Now"
+
 function TwinPage() {
   const city = useMemo(() => buildCity(11), []);
   const [controls, setControls] = useState<SimControls>({
@@ -49,6 +57,13 @@ function TwinPage() {
   const [tMinutes, setTMinutes] = useState(0);
   const [autoplay, setAutoplay] = useState(false);
   const [hoveredRoadId, setHoveredRoadId] = useState<string | null>(null);
+  const [intro, setIntro] = useState(true);
+  const [flyTo, setFlyTo] = useState<{
+    x: number;
+    z: number;
+    preset?: "overview" | "tactical" | "street";
+    nonce: number;
+  } | null>(null);
 
   // Reset crisis play clock when crisis changes
   useEffect(() => {
@@ -92,8 +107,40 @@ function TwinPage() {
     };
   }, [autoplay]);
 
+  // Hotkeys
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (intro) return;
+      if (e.target instanceof HTMLElement && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+      switch (e.key) {
+        case "1": setCrisis("none"); break;
+        case "2": setCrisis("flood"); break;
+        case "3": setCrisis("fire"); break;
+        case "4": setCrisis("surge"); break;
+        case " ":
+          e.preventDefault();
+          setAutoplay((a) => !a);
+          break;
+        case "r":
+        case "R":
+          setTMinutes(0);
+          break;
+        case "o":
+        case "O":
+          flyToPreset("overview");
+          break;
+        case "t":
+        case "T":
+          flyToPreset("tactical");
+          break;
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [intro]);
+
   const snapshot = useMemo(
-    () => simulate(city, controls, crisis, tMinutes, undefined, crisisStartMin),
+    () => simulate(city, controls, crisis, tMinutes, BASE_HOUR, crisisStartMin),
     [city, controls, crisis, tMinutes, crisisStartMin],
   );
 
@@ -101,6 +148,19 @@ function TwinPage() {
     () => project(city, controls, crisis, tMinutes, 24, 30), // 12h ahead, 30min steps
     [city, controls, crisis, tMinutes],
   );
+
+  // Auto-fly to crisis epicenter when one becomes active
+  useEffect(() => {
+    if (crisis === "none") return;
+    const epi =
+      snapshot.fire?.pos ??
+      snapshot.flood?.pos ??
+      snapshot.surge?.pos ??
+      null;
+    if (!epi) return;
+    setFlyTo({ x: epi.x, z: epi.z, preset: "tactical", nonce: Date.now() });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crisis]);
 
   const toggleRoad = (id: string) => {
     setControls((c) => ({
@@ -113,6 +173,27 @@ function TwinPage() {
 
   const applySuggestion = (patch: Partial<SimControls>) => {
     setControls((c) => ({ ...c, ...patch }));
+  };
+
+  const applyScenario = (s: Scenario, tMin: number) => {
+    setControls((c) => ({ ...c, ...s.controls }));
+    setCrisis(s.crisis);
+    setTMinutes(tMin);
+  };
+
+  const flyToPreset = (preset: "overview" | "tactical" | "street") => {
+    if (preset === "overview") {
+      setFlyTo({ x: 0, z: 0, preset, nonce: Date.now() });
+    } else {
+      // fly toward whatever is interesting: crisis epicenter, hottest hotspot, or center
+      const target =
+        snapshot.fire?.pos ??
+        snapshot.flood?.pos ??
+        snapshot.surge?.pos ??
+        snapshot.hotspots[0]?.pos ??
+        { x: 0, z: 0 };
+      setFlyTo({ x: target.x, z: target.z, preset, nonce: Date.now() });
+    }
   };
 
   const hour = Math.floor(snapshot.hour);
@@ -128,6 +209,8 @@ function TwinPage() {
 
   return (
     <main className="h-screen w-screen overflow-hidden text-foreground relative">
+      {intro && <IntroOverlay onEnter={() => setIntro(false)} />}
+
       {/* 3D scene fills the screen */}
       <div className="absolute inset-0 grid-bg">
         <CityScene
@@ -138,53 +221,70 @@ function TwinPage() {
           hoveredRoadId={hoveredRoadId}
           setHoveredRoadId={setHoveredRoadId}
           crisisPlaySeconds={crisisPlaySeconds}
+          flyTo={flyTo}
         />
       </div>
 
+      {/* Vignette */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse at center, transparent 50%, oklch(0 0 0 / 0.55) 100%)",
+        }}
+      />
+
       {/* Top bar */}
       <header className="absolute top-0 left-0 right-0 p-4 flex items-start justify-between gap-4 pointer-events-none">
-        <div className="hud-panel rounded-lg px-4 py-2.5 pointer-events-auto flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full bg-primary animate-blink" />
-          <div>
-            <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-primary text-glow-cyan">
-              Aether · Digital Twin
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Meridian District + Northcrest Campus
+        <div className="flex flex-col gap-3 pointer-events-auto">
+          <div className="hud-panel rounded-lg px-4 py-2.5 flex items-center gap-3">
+            <div className="w-2 h-2 rounded-full bg-primary animate-blink" />
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-primary text-glow-cyan">
+                Aether · Digital Twin
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Meridian District + Northcrest Campus
+              </div>
             </div>
           </div>
+
+          <AIVerdict snapshot={snapshot} />
         </div>
 
-        <div className="flex gap-3 pointer-events-auto">
-          <KPI
-            icon={<Activity className="w-3.5 h-3.5" />}
-            label="Congestion"
-            value={`${(snapshot.congestion * 100).toFixed(0)}%`}
-            tone={
-              snapshot.congestion > 0.7
-                ? "danger"
-                : snapshot.congestion > 0.45
-                ? "amber"
-                : "emerald"
-            }
-          />
-          <KPI
-            icon={<Wind className="w-3.5 h-3.5" />}
-            label="Pollution"
-            value={`${(snapshot.pollution * 100).toFixed(0)}%`}
-            tone={snapshot.pollution > 0.6 ? "amber" : "emerald"}
-          />
-          <KPI
-            icon={<Users className="w-3.5 h-3.5" />}
-            label="Crowd"
-            value={`${(snapshot.crowdLoad * 100).toFixed(0)}%`}
-            tone={snapshot.crowdLoad > 0.6 ? "magenta" : "muted"}
-          />
+        <div className="flex flex-col items-end gap-3 pointer-events-auto">
+          <div className="flex gap-3">
+            <KPI
+              icon={<Activity className="w-3.5 h-3.5" />}
+              label="Congestion"
+              value={`${(snapshot.congestion * 100).toFixed(0)}%`}
+              tone={
+                snapshot.congestion > 0.7
+                  ? "danger"
+                  : snapshot.congestion > 0.45
+                  ? "amber"
+                  : "emerald"
+              }
+            />
+            <KPI
+              icon={<Wind className="w-3.5 h-3.5" />}
+              label="Pollution"
+              value={`${(snapshot.pollution * 100).toFixed(0)}%`}
+              tone={snapshot.pollution > 0.6 ? "amber" : "emerald"}
+            />
+            <KPI
+              icon={<Users className="w-3.5 h-3.5" />}
+              label="Crowd"
+              value={`${(snapshot.crowdLoad * 100).toFixed(0)}%`}
+              tone={snapshot.crowdLoad > 0.6 ? "magenta" : "muted"}
+            />
+            <ResilienceGauge snapshot={snapshot} />
+          </div>
         </div>
       </header>
 
-      {/* Left: Decision panel */}
-      <aside className="absolute left-4 top-24 bottom-32 w-[320px] overflow-y-auto pointer-events-auto">
+      {/* Left: Decision panel + scenarios */}
+      <aside className="absolute left-4 top-44 bottom-32 w-[320px] overflow-y-auto pointer-events-auto space-y-3">
         <ControlPanel
           controls={controls}
           setControls={setControls}
@@ -195,10 +295,44 @@ function TwinPage() {
             setControls((c) => ({ ...c, closedRoadIds: [] }))
           }
         />
+
+        <ScenarioPresets baseHour={BASE_HOUR} onApply={applyScenario} />
+
+        {/* Camera presets */}
+        <div className="hud-panel rounded-lg p-3 space-y-2">
+          <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-primary text-glow-cyan">
+            Camera presets
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <CamBtn icon={<Eye className="w-3 h-3" />} label="Overview" hint="O" onClick={() => flyToPreset("overview")} />
+            <CamBtn icon={<Crosshair className="w-3 h-3" />} label="Tactical" hint="T" onClick={() => flyToPreset("tactical")} />
+            <CamBtn icon={<Footprints className="w-3 h-3" />} label="Street" hint="" onClick={() => flyToPreset("street")} />
+          </div>
+        </div>
+
+        <EventLog
+          city={city}
+          snapshot={snapshot}
+          crisis={crisis}
+          crisisPlaySeconds={crisisPlaySeconds}
+        />
       </aside>
 
-      {/* Right: Forecast + AI suggestions */}
-      <aside className="absolute right-4 top-24 bottom-32 w-[360px] overflow-y-auto pointer-events-auto space-y-4">
+      {/* Right: Mini-map + Crisis ops + AI suggestions + forecast */}
+      <aside className="absolute right-4 top-44 bottom-32 w-[360px] overflow-y-auto pointer-events-auto space-y-3">
+        <MiniMap
+          city={city}
+          snapshot={snapshot}
+          closedRoadIds={controls.closedRoadIds}
+          onFocus={(p) => setFlyTo({ x: p.x, z: p.z, preset: "tactical", nonce: Date.now() })}
+        />
+
+        <CrisisOps
+          city={city}
+          snapshot={snapshot}
+          crisisPlaySeconds={crisisPlaySeconds}
+        />
+
         <div className="hud-panel rounded-lg p-4 space-y-4">
           <header className="space-y-1">
             <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-primary text-glow-cyan flex items-center gap-1.5">
@@ -281,6 +415,7 @@ function TwinPage() {
             <button
               onClick={() => setTMinutes(0)}
               className="px-3 py-1.5 rounded-md border border-border text-xs font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground"
+              title="Reset (R)"
             >
               Now
             </button>
@@ -333,5 +468,25 @@ function KPI({
   );
 }
 
-// Suppress unused import warning
-void Badge;
+function CamBtn({
+  icon,
+  label,
+  hint,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex flex-col items-center gap-0.5 rounded-md border border-border bg-card/40 px-2 py-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground hover:text-primary hover:border-primary/40 transition"
+    >
+      <span className="text-primary">{icon}</span>
+      {label}
+      {hint && <span className="text-[8px] opacity-50">[{hint}]</span>}
+    </button>
+  );
+}

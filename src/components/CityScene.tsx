@@ -13,6 +13,8 @@ type Props = {
   setHoveredRoadId: (id: string | null) => void;
   /** seconds the crisis has been visually playing — drives ignition/collapse */
   crisisPlaySeconds: number;
+  /** target the camera should fly to. Re-fires when reference changes. */
+  flyTo: { x: number; z: number; preset?: "overview" | "tactical" | "street" } | null;
 };
 
 /* ------------------------- realistic buildings ------------------------- */

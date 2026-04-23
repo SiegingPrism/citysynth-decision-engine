@@ -261,22 +261,42 @@ export function simulate(
   if (crisis === "fire") pollution = Math.min(1, pollution + 0.45);
   pollution = Math.max(0, Math.min(1, pollution));
 
-  // Crisis features
+  // Crisis features — radii grow with elapsed minutes (capped)
   const riskZones: SimSnapshot["riskZones"] = [];
   const evacuationRoutes: SimSnapshot["evacuationRoutes"] = [];
+  let fire: SimSnapshot["fire"];
+  let flood: SimSnapshot["flood"];
+  let surge: SimSnapshot["surge"];
+
+  // Spread factor: 0 at t=0, ~1 after 30 min
+  const spread = Math.min(1, elapsed / 30);
+  const futureSpread = Math.min(1, (elapsed + 30) / 30);
+
   if (crisis === "flood") {
-    riskZones.push({ pos: { x: -120, z: 80 }, radius: 180, level: 0.85 });
-    riskZones.push({ pos: { x: 80, z: 180 }, radius: 130, level: 0.6 });
-    evacuationRoutes.push({ a: { x: -120, z: 80 }, b: { x: 280, z: -260 } });
+    const epi: Vec2 = { x: -120, z: 80 };
+    const r = 80 + spread * 160;
+    const rNext = 80 + futureSpread * 160;
+    flood = { pos: epi, radius: r, predictedRadius: rNext, level: Math.min(1, 0.4 + spread * 0.6), waterLevel: 0.5 + spread * 2.5 };
+    riskZones.push({ pos: epi, radius: r, level: 0.85 });
+    riskZones.push({ pos: { x: 80, z: 180 }, radius: 60 + spread * 100, level: 0.55 });
+    evacuationRoutes.push({ a: epi, b: { x: 280, z: -260 } });
     evacuationRoutes.push({ a: { x: 80, z: 180 }, b: { x: -260, z: -260 } });
   } else if (crisis === "fire") {
-    riskZones.push({ pos: { x: 60, z: -40 }, radius: 110, level: 0.95 });
-    evacuationRoutes.push({ a: { x: 60, z: -40 }, b: { x: 280, z: -280 } });
-    evacuationRoutes.push({ a: { x: 60, z: -40 }, b: { x: -280, z: -280 } });
+    const epi: Vec2 = { x: 60, z: -40 };
+    const r = 30 + spread * 100;
+    const rNext = 30 + futureSpread * 100;
+    fire = { pos: epi, radius: r, predictedRadius: rNext, level: Math.min(1, 0.5 + spread * 0.5) };
+    riskZones.push({ pos: epi, radius: r, level: 0.95 });
+    evacuationRoutes.push({ a: epi, b: { x: 280, z: -280 } });
+    evacuationRoutes.push({ a: epi, b: { x: -280, z: -280 } });
   } else if (crisis === "surge") {
-    riskZones.push({ pos: { x: 175, z: -130 }, radius: 90, level: 0.8 });
-    evacuationRoutes.push({ a: { x: 175, z: -130 }, b: { x: 280, z: 280 } });
-    evacuationRoutes.push({ a: { x: 175, z: -130 }, b: { x: -280, z: 280 } });
+    const epi: Vec2 = { x: 175, z: -130 };
+    const r = 50 + spread * 80;
+    const rNext = 50 + futureSpread * 80;
+    surge = { pos: epi, radius: r, predictedRadius: rNext, level: Math.min(1, 0.6 + spread * 0.4) };
+    riskZones.push({ pos: epi, radius: r, level: 0.8 });
+    evacuationRoutes.push({ a: epi, b: { x: 280, z: 280 } });
+    evacuationRoutes.push({ a: epi, b: { x: -280, z: 280 } });
   }
 
   const crowdLoad =
@@ -293,6 +313,10 @@ export function simulate(
     riskZones,
     evacuationRoutes,
     crisis,
+    fire,
+    flood,
+    surge,
+    crisisElapsedMin: crisis === "none" ? 0 : elapsed,
   };
 }
 

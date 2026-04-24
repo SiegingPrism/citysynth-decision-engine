@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, Html } from "@react-three/drei";
+import { OrbitControls, Html, Stars } from "@react-three/drei";
+import { EffectComposer, Bloom, Vignette, BrightnessContrast } from "@react-three/postprocessing";
 import * as THREE from "three";
-import type { Building, CityModel, SimSnapshot, Vec2 } from "@/lib/simulation";
+import type { Building, BuildingVariant, CityModel, SimSnapshot, Vec2 } from "@/lib/simulation";
 
 type Props = {
   city: CityModel;
@@ -19,16 +20,16 @@ type Props = {
 
 /* ------------------------- realistic buildings ------------------------- */
 
-const BUILDING_COLORS: Record<string, [string, string]> = {
-  // [base/wall, accent/window glow]
-  office:      ["#3a4a66", "#fde68a"],
-  residential: ["#4a4458", "#fbbf24"],
-  campus:      ["#3d5a55", "#5cc8ff"],
-  cafeteria:   ["#7a5a3a", "#fbbf24"],
-  lecture:     ["#3a5a78", "#5cc8ff"],
-  library:     ["#4d3a78", "#a78bfa"],
-  parking:     ["#2a3340", "#64748b"],
-  firestation: ["#7a1f1f", "#fde68a"],
+const VARIANT_PALETTE: Record<BuildingVariant, { wall: string; accent: string; window: string; trim?: string; metalness: number; roughness: number }> = {
+  "skyscraper-glass":    { wall: "#1a2840", accent: "#0ea5e9", window: "#7dd3fc", trim: "#475569", metalness: 0.85, roughness: 0.18 },
+  "skyscraper-classic":  { wall: "#3a4258", accent: "#fde68a", window: "#fcd34d", trim: "#1f2937", metalness: 0.35, roughness: 0.55 },
+  "midrise-office":      { wall: "#3d4a60", accent: "#fbbf24", window: "#fde68a", trim: "#27313f", metalness: 0.45, roughness: 0.5 },
+  "brownstone":          { wall: "#5a3a28", accent: "#fbbf24", window: "#fde68a", trim: "#3a2418", metalness: 0.05, roughness: 0.95 },
+  "tower-residential":   { wall: "#46405a", accent: "#fbbf24", window: "#fde68a", trim: "#2a2538", metalness: 0.25, roughness: 0.7 },
+  "campus-modern":       { wall: "#3d5a72", accent: "#5cc8ff", window: "#7dd3fc", trim: "#1f2a38", metalness: 0.55, roughness: 0.35 },
+  "campus-brick":        { wall: "#7a3a2a", accent: "#fde68a", window: "#fbbf24", trim: "#3a1f18", metalness: 0.05, roughness: 0.95 },
+  "civic":               { wall: "#7a1f1f", accent: "#fde68a", window: "#fbbf24", trim: "#1f1a17", metalness: 0.3, roughness: 0.6 },
+  "industrial":          { wall: "#2a3340", accent: "#64748b", window: "#94a3b8", trim: "#1f2937", metalness: 0.4, roughness: 0.8 },
 };
 
 function buildingDamageState(
@@ -79,38 +80,48 @@ function Building3D({
   hour: number;
   state: ReturnType<typeof buildingDamageState>;
 }) {
-  const [base, glow] = BUILDING_COLORS[b.kind] ?? BUILDING_COLORS.office;
+  const palette = VARIANT_PALETTE[b.variant] ?? VARIANT_PALETTE["midrise-office"];
   const isNight = hour < 6.5 || hour > 19;
-  const lightProb = isNight ? 0.7 : 0.15;
+  const lightProb = isNight ? 0.7 : 0.18;
 
-  const { stories, windowsPerFloor } = useMemo(() => {
-    const stories = Math.max(2, Math.floor(b.h / 3.5));
-    const windowsPerFloor = Math.max(2, Math.floor(b.w / 5));
-    return { stories, windowsPerFloor };
-  }, [b.h, b.w]);
+  const { stories } = useMemo(() => {
+    const floorH =
+      b.variant === "skyscraper-glass" || b.variant === "skyscraper-classic" ? 4.5 : 3.5;
+    return { stories: Math.max(2, Math.floor(b.h / floorH)) };
+  }, [b.h, b.variant]);
 
-  // pre-randomize lit windows per building (stable)
+  // Stable per-building randomness for window lights & rooftop props
   const litMatrix = useMemo(() => {
     const seed = Math.abs(Math.floor(b.pos.x * 13 + b.pos.z * 7));
     const out: number[] = [];
     let s = seed;
-    for (let i = 0; i < stories * windowsPerFloor * 4; i++) {
+    for (let i = 0; i < stories * 8; i++) {
       s = (s * 1664525 + 1013904223) >>> 0;
       out.push(s / 0xffffffff);
     }
     return out;
-  }, [b.pos.x, b.pos.z, stories, windowsPerFloor]);
+  }, [b.pos.x, b.pos.z, stories]);
 
   if (state.collapsed) {
-    // Rubble pile
     return (
       <group position={[b.pos.x, 0, b.pos.z]}>
-        <mesh position={[0, b.h * 0.08, 0]} castShadow>
-          <boxGeometry args={[b.w * 1.05, b.h * 0.16, b.d * 1.05]} />
-          <meshStandardMaterial color="#1f1a17" roughness={0.95} />
+        {/* Rubble pile of jagged blocks */}
+        {Array.from({ length: 6 }).map((_, i) => {
+          const a = (i / 6) * Math.PI * 2;
+          const r = (i % 3) * 1.6;
+          const sz = 1.4 + (i % 3) * 0.8;
+          return (
+            <mesh key={i} position={[Math.cos(a) * r, 0.6 + (i % 2) * 0.4, Math.sin(a) * r]} rotation={[0, a, 0.3]} castShadow>
+              <boxGeometry args={[sz * 1.2, sz, sz]} />
+              <meshStandardMaterial color="#1f1a17" roughness={0.95} />
+            </mesh>
+          );
+        })}
+        <mesh position={[0, 0.2, 0]}>
+          <boxGeometry args={[b.w * 1.05, 0.4, b.d * 1.05]} />
+          <meshStandardMaterial color="#0d0807" roughness={0.95} />
         </mesh>
-        {/* embers */}
-        <pointLight position={[0, 4, 0]} color="#ff6a2a" intensity={0.6} distance={40} />
+        <pointLight position={[0, 4, 0]} color="#ff6a2a" intensity={0.7} distance={50} />
       </group>
     );
   }
@@ -118,114 +129,166 @@ function Building3D({
   // Damage tilt + sink
   const tilt = state.damage * 0.18;
   const sink = state.damage * b.h * 0.15;
-  const buildingY = Math.max(0, b.h / 2 - sink);
   const buildingHeight = b.h * (1 - state.damage * 0.12);
 
   // Color shift for fire damage (sooty)
   const sootMix = state.damage;
-  const wallColor = new THREE.Color(base).lerp(new THREE.Color("#0d0807"), sootMix * 0.7);
+  const wallColor = new THREE.Color(palette.wall).lerp(new THREE.Color("#0d0807"), sootMix * 0.7);
+  const trimColor = new THREE.Color(palette.trim ?? palette.wall).lerp(new THREE.Color("#0d0807"), sootMix * 0.7);
   const emissiveOnFire = state.onFire
     ? new THREE.Color("#ff5a1f").multiplyScalar(0.6 + Math.sin(performance.now() * 0.01) * 0.25)
     : new THREE.Color("#000");
 
-  // Tier the building: optional smaller upper section for tall offices
-  const hasTier = b.h > 50 && (b.kind === "office" || b.kind === "campus" || b.kind === "lecture");
+  // Variant-driven shape
+  const isGlass = b.variant === "skyscraper-glass";
+  const isClassicTall = b.variant === "skyscraper-classic";
+  const isBrownstone = b.variant === "brownstone";
+  const isCivic = b.variant === "civic";
+  const isIndustrial = b.variant === "industrial";
+
+  // Tier shape: tall buildings get setbacks
+  const hasTier = (isGlass || isClassicTall) && b.h > 50;
   const lowerH = hasTier ? buildingHeight * 0.6 : buildingHeight;
   const upperH = hasTier ? buildingHeight * 0.4 : 0;
+  const podiumH = isBrownstone ? 1.2 : 0.8;
+
+  // Window strip color (slightly variable per building)
+  const winColor = new THREE.Color(palette.window);
+  const winEmissiveBase = isGlass ? 0.4 : 0.0;
 
   return (
     <group
       position={[b.pos.x, 0, b.pos.z]}
-      rotation={[tilt * 0.5, 0, tilt]}
+      rotation={[tilt * 0.5, b.rotY, tilt]}
     >
-      {/* ground footprint / podium */}
-      <mesh position={[0, 0.4, 0]} receiveShadow>
-        <boxGeometry args={[b.w * 1.08, 0.8, b.d * 1.08]} />
-        <meshStandardMaterial color="#1a2230" roughness={0.9} />
+      {/* Plaza / podium base */}
+      <mesh position={[0, podiumH / 2, 0]} receiveShadow>
+        <boxGeometry args={[b.w * 1.1, podiumH, b.d * 1.1]} />
+        <meshStandardMaterial color={trimColor} roughness={0.92} metalness={0.1} />
       </mesh>
 
-      {/* lower body */}
+      {/* LOWER body */}
       <mesh
-        position={[0, lowerH / 2 + 0.8, 0]}
+        position={[0, lowerH / 2 + podiumH - sink, 0]}
         castShadow
         receiveShadow
       >
         <boxGeometry args={[b.w, lowerH, b.d]} />
         <meshStandardMaterial
           color={wallColor}
-          roughness={0.7}
-          metalness={0.25}
+          roughness={palette.roughness}
+          metalness={palette.metalness}
           emissive={emissiveOnFire}
           emissiveIntensity={state.onFire ? 0.8 : 0}
         />
       </mesh>
 
-      {/* tiered upper */}
+      {/* For glass towers, add an inner emissive "core" through windows */}
+      {isGlass && !state.onFire && isNight && (
+        <mesh position={[0, lowerH / 2 + podiumH, 0]}>
+          <boxGeometry args={[b.w * 0.96, lowerH * 0.96, b.d * 0.96]} />
+          <meshBasicMaterial color={palette.accent} transparent opacity={0.18} />
+        </mesh>
+      )}
+
+      {/* TIERED upper section */}
       {hasTier && (
-        <mesh
-          position={[0, lowerH + upperH / 2 + 0.8, 0]}
-          castShadow
-        >
+        <mesh position={[0, lowerH + upperH / 2 + podiumH - sink, 0]} castShadow>
           <boxGeometry args={[b.w * 0.7, upperH, b.d * 0.7]} />
           <meshStandardMaterial
             color={wallColor}
-            roughness={0.6}
-            metalness={0.3}
+            roughness={palette.roughness * 0.9}
+            metalness={palette.metalness}
             emissive={emissiveOnFire}
             emissiveIntensity={state.onFire ? 0.7 : 0}
           />
         </mesh>
       )}
 
-      {/* rooftop equipment */}
-      <mesh position={[0, buildingHeight + 1 + 0.8, 0]}>
-        <boxGeometry args={[b.w * 0.4, 1.2, b.d * 0.4]} />
-        <meshStandardMaterial color="#2a3040" roughness={0.8} />
-      </mesh>
-      {hasTier && (
-        <mesh position={[b.w * 0.18, lowerH + 1.5 + 0.8, 0]}>
-          <boxGeometry args={[2, 3, 2]} />
-          <meshStandardMaterial color="#3a4050" />
+      {/* CROWN — antenna for skyscrapers */}
+      {(isGlass || isClassicTall) && b.h > 70 && (
+        <>
+          <mesh position={[0, buildingHeight + podiumH + 4, 0]}>
+            <cylinderGeometry args={[0.3, 0.6, 8, 6]} />
+            <meshStandardMaterial color="#94a3b8" metalness={0.8} roughness={0.3} />
+          </mesh>
+          <mesh position={[0, buildingHeight + podiumH + 8.5, 0]}>
+            <sphereGeometry args={[0.4, 8, 8]} />
+            <meshBasicMaterial color="#ef4444" />
+          </mesh>
+          <pointLight position={[0, buildingHeight + podiumH + 8.5, 0]} color="#ef4444" intensity={1.5} distance={40} />
+        </>
+      )}
+
+      {/* Rooftop equipment box */}
+      {!isBrownstone && (
+        <mesh position={[0, buildingHeight + podiumH + 0.6, 0]}>
+          <boxGeometry args={[b.w * 0.4, 1.2, b.d * 0.4]} />
+          <meshStandardMaterial color={trimColor} roughness={0.85} />
+        </mesh>
+      )}
+      {/* AC units / vents */}
+      {isIndustrial || isCivic ? null : (
+        <>
+          <mesh position={[b.w * 0.25, buildingHeight + podiumH + 1, b.d * 0.25]}>
+            <boxGeometry args={[2, 1.4, 2]} />
+            <meshStandardMaterial color="#475569" />
+          </mesh>
+          <mesh position={[-b.w * 0.25, buildingHeight + podiumH + 1, -b.d * 0.25]}>
+            <boxGeometry args={[1.5, 1, 1.5]} />
+            <meshStandardMaterial color="#64748b" />
+          </mesh>
+        </>
+      )}
+
+      {/* Brownstone pitched roof */}
+      {isBrownstone && (
+        <mesh position={[0, buildingHeight + podiumH + 1, 0]} rotation={[0, Math.PI / 4, 0]}>
+          <coneGeometry args={[Math.max(b.w, b.d) * 0.7, 3, 4]} />
+          <meshStandardMaterial color="#3a2418" roughness={0.95} />
         </mesh>
       )}
 
-      {/* WINDOW STRIPS (front + back) using emissive plane */}
-      {!state.collapsed &&
-        Array.from({ length: stories }).map((_, floor) => {
-          const y = 1.6 + floor * (lowerH / stories);
-          if (y > lowerH + 0.5) return null;
-          const litFront = (litMatrix[floor * 4] ?? 0) < lightProb ? 0.9 : 0.05;
-          const litBack = (litMatrix[floor * 4 + 1] ?? 0) < lightProb ? 0.9 : 0.05;
-          const litLeft = (litMatrix[floor * 4 + 2] ?? 0) < lightProb ? 0.9 : 0.05;
-          const litRight = (litMatrix[floor * 4 + 3] ?? 0) < lightProb ? 0.9 : 0.05;
-          const winColor = new THREE.Color(glow);
-          // dim windows when sooty
-          const dim = 1 - sootMix * 0.85;
-          return (
-            <group key={floor}>
-              {/* front */}
-              <mesh position={[0, y, b.d / 2 + 0.05]}>
-                <planeGeometry args={[b.w * 0.85, 1.4]} />
-                <meshBasicMaterial color={winColor} transparent opacity={litFront * dim} />
-              </mesh>
-              {/* back */}
-              <mesh position={[0, y, -b.d / 2 - 0.05]} rotation={[0, Math.PI, 0]}>
-                <planeGeometry args={[b.w * 0.85, 1.4]} />
-                <meshBasicMaterial color={winColor} transparent opacity={litBack * dim} />
-              </mesh>
-              {/* left */}
-              <mesh position={[-b.w / 2 - 0.05, y, 0]} rotation={[0, -Math.PI / 2, 0]}>
-                <planeGeometry args={[b.d * 0.85, 1.4]} />
-                <meshBasicMaterial color={winColor} transparent opacity={litLeft * dim} />
-              </mesh>
-              {/* right */}
-              <mesh position={[b.w / 2 + 0.05, y, 0]} rotation={[0, Math.PI / 2, 0]}>
-                <planeGeometry args={[b.d * 0.85, 1.4]} />
-                <meshBasicMaterial color={winColor} transparent opacity={litRight * dim} />
-              </mesh>
-            </group>
-          );
-        })}
+      {/* WINDOW STRIPS */}
+      {Array.from({ length: stories }).map((_, floor) => {
+        const floorH = lowerH / stories;
+        const y = podiumH + 1.2 + floor * floorH;
+        if (y > lowerH + podiumH + 0.5) return null;
+        const litFront = (litMatrix[floor * 4] ?? 0) < lightProb ? 0.95 : 0.06;
+        const litBack = (litMatrix[floor * 4 + 1] ?? 0) < lightProb ? 0.95 : 0.06;
+        const litLeft = (litMatrix[floor * 4 + 2] ?? 0) < lightProb ? 0.95 : 0.06;
+        const litRight = (litMatrix[floor * 4 + 3] ?? 0) < lightProb ? 0.95 : 0.06;
+        const dim = 1 - sootMix * 0.85;
+        const stripH = isGlass ? floorH * 0.85 : 1.4;
+        return (
+          <group key={floor}>
+            <mesh position={[0, y, b.d / 2 + 0.05]}>
+              <planeGeometry args={[b.w * 0.85, stripH]} />
+              <meshBasicMaterial color={winColor} transparent opacity={(litFront + winEmissiveBase) * dim} />
+            </mesh>
+            <mesh position={[0, y, -b.d / 2 - 0.05]} rotation={[0, Math.PI, 0]}>
+              <planeGeometry args={[b.w * 0.85, stripH]} />
+              <meshBasicMaterial color={winColor} transparent opacity={(litBack + winEmissiveBase) * dim} />
+            </mesh>
+            <mesh position={[-b.w / 2 - 0.05, y, 0]} rotation={[0, -Math.PI / 2, 0]}>
+              <planeGeometry args={[b.d * 0.85, stripH]} />
+              <meshBasicMaterial color={winColor} transparent opacity={(litLeft + winEmissiveBase) * dim} />
+            </mesh>
+            <mesh position={[b.w / 2 + 0.05, y, 0]} rotation={[0, Math.PI / 2, 0]}>
+              <planeGeometry args={[b.d * 0.85, stripH]} />
+              <meshBasicMaterial color={winColor} transparent opacity={(litRight + winEmissiveBase) * dim} />
+            </mesh>
+          </group>
+        );
+      })}
+
+      {/* Mullions for glass towers — vertical lines */}
+      {isGlass && [-1, 1].map((s) => (
+        <mesh key={s} position={[0, lowerH / 2 + podiumH, (b.d / 2 + 0.06) * s]}>
+          <planeGeometry args={[b.w * 0.85, lowerH * 0.95]} />
+          <meshBasicMaterial color="#0f1626" transparent opacity={0.35} />
+        </mesh>
+      ))}
 
       {/* fire glow at ignition point */}
       {state.onFire && !state.collapsed && (
@@ -241,20 +304,16 @@ function Building3D({
       {/* Fire-station signage: red roof beacon + bay doors */}
       {b.kind === "firestation" && !state.collapsed && (
         <>
-          {/* Bright red roof */}
-          <mesh position={[0, buildingHeight + 0.8 + 0.4, 0]}>
+          <mesh position={[0, buildingHeight + podiumH + 0.4, 0]}>
             <boxGeometry args={[b.w * 1.02, 0.8, b.d * 1.02]} />
             <meshStandardMaterial color="#dc2626" emissive="#7f1d1d" emissiveIntensity={0.4} />
           </mesh>
-          {/* Rotating beacon */}
-          <FireStationBeacon height={buildingHeight + 2.2} />
-          {/* Bay doors (yellow stripes) */}
+          <FireStationBeacon height={buildingHeight + podiumH + 2.2} />
           <mesh position={[0, 3, b.d / 2 + 0.06]}>
             <planeGeometry args={[b.w * 0.7, 5]} />
             <meshBasicMaterial color="#fbbf24" />
           </mesh>
-          {/* "FIRE" letter glow strip */}
-          <mesh position={[0, buildingHeight - 1.5 + 0.8, b.d / 2 + 0.07]}>
+          <mesh position={[0, buildingHeight + podiumH - 1.5, b.d / 2 + 0.07]}>
             <planeGeometry args={[b.w * 0.6, 1.2]} />
             <meshBasicMaterial color="#fef08a" />
           </mesh>
@@ -400,24 +459,27 @@ function Roads({
   );
 }
 
-/* ------------------------------ trees / props ------------------------------ */
+/* ------------------------------ trees / parks ------------------------------ */
+
+const TREE_VARIANTS = ["oak", "pine", "palm"] as const;
+type TreeVariant = (typeof TREE_VARIANTS)[number];
 
 function Trees({ city }: { city: CityModel }) {
   const trees = useMemo(() => {
-    const out: { x: number; z: number; s: number }[] = [];
+    const out: { x: number; z: number; s: number; v: TreeVariant; rot: number }[] = [];
     let s = 19;
     const rnd = () => {
       s = (s * 1664525 + 1013904223) >>> 0;
       return s / 0xffffffff;
     };
-    const treeCount = Math.floor((city.size * city.size) / 1500);
+    const treeCount = Math.floor((city.size * city.size) / 1100);
     for (let i = 0; i < treeCount; i++) {
       const x = (rnd() - 0.5) * city.size;
       const z = (rnd() - 0.5) * city.size;
-      // place near intersections (offset onto sidewalk corners)
       const nx = Math.round(x / 60) * 60 + (rnd() > 0.5 ? 7 : -7);
       const nz = Math.round(z / 60) * 60 + (rnd() > 0.5 ? 7 : -7);
-      out.push({ x: nx, z: nz, s: 0.7 + rnd() * 0.5 });
+      const v = TREE_VARIANTS[Math.floor(rnd() * TREE_VARIANTS.length)];
+      out.push({ x: nx, z: nz, s: 0.7 + rnd() * 0.6, v, rot: rnd() * Math.PI });
     }
     return out;
   }, [city.size]);
@@ -425,86 +487,372 @@ function Trees({ city }: { city: CityModel }) {
   return (
     <group>
       {trees.map((t, i) => (
-        <group key={i} position={[t.x, 0, t.z]} scale={[t.s, t.s, t.s]}>
-          <mesh position={[0, 1.2, 0]}>
-            <cylinderGeometry args={[0.25, 0.35, 2.4, 6]} />
-            <meshStandardMaterial color="#3a2418" />
+        <TreeMesh key={i} x={t.x} z={t.z} scale={t.s} variant={t.v} rot={t.rot} />
+      ))}
+    </group>
+  );
+}
+
+function TreeMesh({ x, z, scale, variant, rot }: { x: number; z: number; scale: number; variant: TreeVariant; rot: number }) {
+  if (variant === "pine") {
+    return (
+      <group position={[x, 0, z]} scale={[scale, scale, scale]} rotation={[0, rot, 0]}>
+        <mesh position={[0, 1.2, 0]}>
+          <cylinderGeometry args={[0.22, 0.32, 2.4, 6]} />
+          <meshStandardMaterial color="#3a2418" />
+        </mesh>
+        <mesh position={[0, 3, 0]} castShadow>
+          <coneGeometry args={[1.4, 3.4, 8]} />
+          <meshStandardMaterial color="#1a5a30" roughness={0.95} />
+        </mesh>
+        <mesh position={[0, 4.6, 0]} castShadow>
+          <coneGeometry args={[1.0, 2.4, 8]} />
+          <meshStandardMaterial color="#1f6e3a" roughness={0.95} />
+        </mesh>
+      </group>
+    );
+  }
+  if (variant === "palm") {
+    return (
+      <group position={[x, 0, z]} scale={[scale, scale, scale]} rotation={[0, rot, 0]}>
+        <mesh position={[0, 2, 0]}>
+          <cylinderGeometry args={[0.18, 0.3, 4.4, 6]} />
+          <meshStandardMaterial color="#5a3a1a" />
+        </mesh>
+        {[0, 1, 2, 3, 4].map((i) => {
+          const a = (i / 5) * Math.PI * 2;
+          return (
+            <mesh key={i} position={[Math.cos(a) * 0.6, 4.4, Math.sin(a) * 0.6]} rotation={[0.4, a, 0]} castShadow>
+              <boxGeometry args={[2.6, 0.06, 0.5]} />
+              <meshStandardMaterial color="#2f7a3a" />
+            </mesh>
+          );
+        })}
+      </group>
+    );
+  }
+  // oak (default — round canopy)
+  return (
+    <group position={[x, 0, z]} scale={[scale, scale, scale]} rotation={[0, rot, 0]}>
+      <mesh position={[0, 1.2, 0]}>
+        <cylinderGeometry args={[0.28, 0.4, 2.6, 6]} />
+        <meshStandardMaterial color="#3a2418" />
+      </mesh>
+      <mesh position={[0, 3.4, 0]} castShadow>
+        <icosahedronGeometry args={[1.9, 1]} />
+        <meshStandardMaterial color="#1f6e3a" roughness={0.92} />
+      </mesh>
+      <mesh position={[0.7, 3.0, 0.4]} castShadow>
+        <icosahedronGeometry args={[1.1, 0]} />
+        <meshStandardMaterial color="#2a8048" roughness={0.92} />
+      </mesh>
+    </group>
+  );
+}
+
+/* ------------------------------ STREETLIGHTS ------------------------------ */
+
+function Streetlights({ city, hour }: { city: CityModel; hour: number }) {
+  const isNight = hour < 6.5 || hour > 19;
+  const positions = useMemo(() => {
+    const out: { x: number; z: number }[] = [];
+    let s = 91;
+    const rnd = () => {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s / 0xffffffff;
+    };
+    const half = city.size / 2;
+    for (let x = -half + 30; x < half; x += 60) {
+      for (let z = -half + 30; z < half; z += 60) {
+        if (rnd() > 0.55) continue;
+        const ox = (rnd() > 0.5 ? 1 : -1) * 5;
+        const oz = (rnd() > 0.5 ? 1 : -1) * 5;
+        out.push({ x: x + ox, z: z + oz });
+      }
+    }
+    return out;
+  }, [city.size]);
+
+  return (
+    <group>
+      {positions.map((p, i) => (
+        <group key={i} position={[p.x, 0, p.z]}>
+          <mesh position={[0, 3, 0]}>
+            <cylinderGeometry args={[0.12, 0.18, 6, 6]} />
+            <meshStandardMaterial color="#1f2937" metalness={0.6} roughness={0.5} />
           </mesh>
-          <mesh position={[0, 3.2, 0]} castShadow>
-            <icosahedronGeometry args={[1.8, 0]} />
-            <meshStandardMaterial color="#1f6e3a" roughness={0.9} />
+          <mesh position={[0.6, 5.8, 0]}>
+            <boxGeometry args={[1.2, 0.18, 0.3]} />
+            <meshStandardMaterial color="#1f2937" />
           </mesh>
+          <mesh position={[1.1, 5.6, 0]}>
+            <sphereGeometry args={[0.32, 8, 8]} />
+            <meshBasicMaterial color={isNight ? "#fde68a" : "#374151"} />
+          </mesh>
+          {isNight && <pointLight position={[1.1, 5.6, 0]} color="#fde68a" intensity={0.45} distance={18} decay={2} />}
         </group>
       ))}
     </group>
   );
 }
 
-/* ------------------------------ vehicles ------------------------------ */
+/* ------------------------------ PARKS ------------------------------ */
+
+function Parks({ city }: { city: CityModel }) {
+  // 3 procedural park patches off the campus
+  const parks = useMemo(
+    () => [
+      { x: -260, z: 60, w: 80, d: 80 },
+      { x: 320, z: -160, w: 70, d: 70 },
+      { x: -120, z: -340, w: 90, d: 60 },
+    ].filter((p) => Math.abs(p.x) < city.size / 2 - 60 && Math.abs(p.z) < city.size / 2 - 60),
+    [city.size],
+  );
+  return (
+    <group>
+      {parks.map((p, i) => (
+        <group key={i} position={[p.x, 0, p.z]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]} receiveShadow>
+            <planeGeometry args={[p.w, p.d]} />
+            <meshStandardMaterial color="#1a4a28" roughness={0.95} />
+          </mesh>
+          {/* Pond */}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.08, 0]}>
+            <circleGeometry args={[Math.min(p.w, p.d) * 0.18, 32]} />
+            <meshStandardMaterial color="#1d4ed8" metalness={0.7} roughness={0.2} emissive="#3b82f6" emissiveIntensity={0.15} />
+          </mesh>
+          {/* Trees ringing the park */}
+          {Array.from({ length: 8 }).map((_, j) => {
+            const a = (j / 8) * Math.PI * 2;
+            const r = Math.min(p.w, p.d) * 0.42;
+            return (
+              <TreeMesh
+                key={j}
+                x={Math.cos(a) * r}
+                z={Math.sin(a) * r}
+                scale={1 + (j % 3) * 0.2}
+                variant={j % 2 === 0 ? "oak" : "pine"}
+                rot={a}
+              />
+            );
+          })}
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/* ------------------------------ vehicles (detailed cars) ------------------------------ */
+
+const CAR_PALETTE = [
+  "#fde68a", // taxi yellow
+  "#5cc8ff", // light blue
+  "#dc2626", // red
+  "#f8fafc", // white
+  "#1f2937", // dark
+  "#a78bfa", // purple
+  "#22c55e", // green
+];
 
 function Vehicles({ city, snapshot }: { city: CityModel; snapshot: SimSnapshot }) {
   const data = useMemo(() => {
-    const items: Array<{ road: typeof city.roads[number]; offset: number; speed: number; color: number }> = [];
+    const items: Array<{ road: typeof city.roads[number]; offset: number; speed: number; colorIdx: number; lane: number }> = [];
+    let seed = 7;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0xffffffff;
+    };
     for (const road of city.roads) {
       const util = snapshot.roadFlow[road.id] ?? 0;
       if (util >= 1) continue;
-      const count = Math.max(0, Math.floor(util * 6));
+      const count = Math.max(0, Math.floor(util * 7));
       const speed = Math.max(0.04, 1 - util) * 0.5;
       for (let i = 0; i < count; i++) {
-        items.push({ road, offset: i / count, speed, color: i % 4 });
+        items.push({
+          road,
+          offset: i / count,
+          speed,
+          colorIdx: Math.floor(rnd() * CAR_PALETTE.length),
+          lane: i % 2 === 0 ? 1 : -1,
+        });
       }
     }
     return items;
   }, [city, snapshot]);
 
-  const ref = useRef<THREE.InstancedMesh>(null);
+  // Three instanced meshes: body, windshield strip, headlights
+  const bodyRef = useRef<THREE.InstancedMesh>(null);
+  const roofRef = useRef<THREE.InstancedMesh>(null);
+  const headRef = useRef<THREE.InstancedMesh>(null);
+  const tailRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
-  const palette = useMemo(
-    () => [
-      new THREE.Color("#fde68a"),
-      new THREE.Color("#5cc8ff"),
-      new THREE.Color("#ff7a59"),
-      new THREE.Color("#a78bfa"),
-    ],
-    [],
-  );
 
-  // Set per-instance colors once when data changes
   useEffect(() => {
-    if (!ref.current) return;
+    if (!bodyRef.current) return;
     data.forEach((d, i) => {
-      ref.current!.setColorAt(i, palette[d.color]);
+      bodyRef.current!.setColorAt(i, new THREE.Color(CAR_PALETTE[d.colorIdx]));
     });
-    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
-  }, [data, palette]);
+    if (bodyRef.current.instanceColor) bodyRef.current.instanceColor.needsUpdate = true;
+  }, [data]);
 
   useFrame(({ clock }) => {
-    if (!ref.current) return;
+    if (!bodyRef.current || !roofRef.current || !headRef.current || !tailRef.current) return;
     const t = clock.getElapsedTime();
     data.forEach((d, i) => {
       const p = (d.offset + t * d.speed) % 1;
       const x = d.road.a.x + (d.road.b.x - d.road.a.x) * p;
       const z = d.road.a.z + (d.road.b.z - d.road.a.z) * p;
       const angle = Math.atan2(d.road.b.z - d.road.a.z, d.road.b.x - d.road.a.x);
-      dummy.position.set(x, 1.0, z);
+      // lane offset (perpendicular)
+      const lx = Math.cos(angle + Math.PI / 2) * d.lane * 1.4;
+      const lz = Math.sin(angle + Math.PI / 2) * d.lane * 1.4;
+
+      // body
+      dummy.position.set(x + lx, 0.7, z + lz);
       dummy.rotation.y = -angle;
+      dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
-      ref.current!.setMatrixAt(i, dummy.matrix);
+      bodyRef.current!.setMatrixAt(i, dummy.matrix);
+
+      // roof (smaller cab on top)
+      dummy.position.set(x + lx - Math.cos(angle) * 0.2, 1.4, z + lz - Math.sin(angle) * 0.2);
+      dummy.updateMatrix();
+      roofRef.current!.setMatrixAt(i, dummy.matrix);
+
+      // headlights — push forward
+      const fx = Math.cos(angle) * 1.7;
+      const fz = Math.sin(angle) * 1.7;
+      dummy.position.set(x + lx + fx, 0.65, z + lz + fz);
+      dummy.updateMatrix();
+      headRef.current!.setMatrixAt(i, dummy.matrix);
+
+      // taillights — push back
+      dummy.position.set(x + lx - fx, 0.65, z + lz - fz);
+      dummy.updateMatrix();
+      tailRef.current!.setMatrixAt(i, dummy.matrix);
     });
-    ref.current.count = data.length;
-    ref.current.instanceMatrix.needsUpdate = true;
+    bodyRef.current.count = data.length;
+    roofRef.current.count = data.length;
+    headRef.current.count = data.length;
+    tailRef.current.count = data.length;
+    bodyRef.current.instanceMatrix.needsUpdate = true;
+    roofRef.current.instanceMatrix.needsUpdate = true;
+    headRef.current.instanceMatrix.needsUpdate = true;
+    tailRef.current.instanceMatrix.needsUpdate = true;
   });
 
   if (data.length === 0) return null;
+  const n = Math.max(1, data.length);
 
   return (
-    <instancedMesh
-      ref={ref}
-      args={[undefined, undefined, Math.max(1, data.length)]}
-    >
-      <boxGeometry args={[3.6, 1.6, 1.8]} />
-      <meshStandardMaterial color="#ffffff" metalness={0.6} roughness={0.4} />
-    </instancedMesh>
+    <group>
+      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]} castShadow>
+        <boxGeometry args={[3.6, 1.0, 1.7]} />
+        <meshStandardMaterial metalness={0.65} roughness={0.32} />
+      </instancedMesh>
+      <instancedMesh ref={roofRef} args={[undefined, undefined, n]}>
+        <boxGeometry args={[2.2, 0.7, 1.55]} />
+        <meshStandardMaterial color="#0ea5e9" metalness={0.7} roughness={0.18} transparent opacity={0.75} emissive="#0ea5e9" emissiveIntensity={0.15} />
+      </instancedMesh>
+      <instancedMesh ref={headRef} args={[undefined, undefined, n]}>
+        <boxGeometry args={[0.3, 0.3, 1.5]} />
+        <meshBasicMaterial color="#fef9c3" />
+      </instancedMesh>
+      <instancedMesh ref={tailRef} args={[undefined, undefined, n]}>
+        <boxGeometry args={[0.3, 0.3, 1.5]} />
+        <meshBasicMaterial color="#ef4444" />
+      </instancedMesh>
+    </group>
+  );
+}
+
+/* ------------------------------ PEDESTRIANS ------------------------------ */
+
+function Pedestrians({ city, snapshot }: { city: CityModel; snapshot: SimSnapshot }) {
+  // Walk along sidewalks parallel to roads. Limit count for perf.
+  const data = useMemo(() => {
+    const items: Array<{ road: typeof city.roads[number]; offset: number; speed: number; side: number; color: number }> = [];
+    let seed = 31;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0xffffffff;
+    };
+    // roughly proportional to crowd load
+    const total = Math.floor(60 + snapshot.crowdLoad * 180);
+    for (let n = 0; n < total; n++) {
+      const road = city.roads[Math.floor(rnd() * city.roads.length)];
+      items.push({
+        road,
+        offset: rnd(),
+        speed: 0.04 + rnd() * 0.04,
+        side: rnd() > 0.5 ? 1 : -1,
+        color: Math.floor(rnd() * 5),
+      });
+    }
+    return items;
+  }, [city.roads, snapshot.crowdLoad]);
+
+  const bodyRef = useRef<THREE.InstancedMesh>(null);
+  const headRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const palette = useMemo(
+    () => [
+      new THREE.Color("#5cc8ff"),
+      new THREE.Color("#fbbf24"),
+      new THREE.Color("#ef4444"),
+      new THREE.Color("#a78bfa"),
+      new THREE.Color("#22c55e"),
+    ],
+    [],
+  );
+
+  useEffect(() => {
+    if (!bodyRef.current) return;
+    data.forEach((d, i) => bodyRef.current!.setColorAt(i, palette[d.color]));
+    if (bodyRef.current.instanceColor) bodyRef.current.instanceColor.needsUpdate = true;
+  }, [data, palette]);
+
+  useFrame(({ clock }) => {
+    if (!bodyRef.current || !headRef.current) return;
+    const t = clock.getElapsedTime();
+    data.forEach((d, i) => {
+      const p = (d.offset + t * d.speed) % 1;
+      const x = d.road.a.x + (d.road.b.x - d.road.a.x) * p;
+      const z = d.road.a.z + (d.road.b.z - d.road.a.z) * p;
+      const angle = Math.atan2(d.road.b.z - d.road.a.z, d.road.b.x - d.road.a.x);
+      // sidewalk offset
+      const sx = Math.cos(angle + Math.PI / 2) * d.side * 5;
+      const sz = Math.sin(angle + Math.PI / 2) * d.side * 5;
+      const bob = Math.sin(t * 8 + i) * 0.08;
+      dummy.position.set(x + sx, 0.8 + bob, z + sz);
+      dummy.rotation.y = -angle + (d.side > 0 ? 0 : Math.PI);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      bodyRef.current!.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(x + sx, 1.7 + bob, z + sz);
+      dummy.updateMatrix();
+      headRef.current!.setMatrixAt(i, dummy.matrix);
+    });
+    bodyRef.current.count = data.length;
+    headRef.current.count = data.length;
+    bodyRef.current.instanceMatrix.needsUpdate = true;
+    headRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  if (data.length === 0) return null;
+  const n = Math.max(1, data.length);
+  return (
+    <group>
+      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]} castShadow>
+        <capsuleGeometry args={[0.3, 0.9, 4, 6]} />
+        <meshStandardMaterial roughness={0.6} />
+      </instancedMesh>
+      <instancedMesh ref={headRef} args={[undefined, undefined, n]}>
+        <sphereGeometry args={[0.28, 8, 8]} />
+        <meshStandardMaterial color="#fde68a" roughness={0.7} />
+      </instancedMesh>
+    </group>
   );
 }
 
@@ -1751,6 +2099,160 @@ function CrisisCameraFX({ snapshot }: { snapshot: SimSnapshot }) {
   return null;
 }
 
+/* ------------------------- POLICE + AMBULANCE ESCORT ------------------------- */
+
+function EmergencyEscort({
+  fire,
+  stations,
+  playSec,
+}: {
+  fire: NonNullable<SimSnapshot["fire"]>;
+  stations: Building[];
+  playSec: number;
+}) {
+  // For each station, dispatch an ambulance + police following the fire truck path
+  const paths = useMemo(() => {
+    return stations.slice(0, 2).map((s, i) => {
+      const via: Vec2 = { x: fire.pos.x, z: s.pos.z };
+      return { station: s.pos, via, fire: fire.pos, phase: i * 0.5 };
+    });
+  }, [stations, fire.pos.x, fire.pos.z]);
+
+  return (
+    <group>
+      {paths.map((p, i) => (
+        <EscortVehicle key={`amb-${i}`} kind="ambulance" path={p} playSec={playSec} fireRadius={fire.radius} delay={2 + i * 0.4} />
+      ))}
+      {paths.map((p, i) => (
+        <EscortVehicle key={`pol-${i}`} kind="police" path={p} playSec={playSec} fireRadius={fire.radius} delay={0.4 + i * 0.4} />
+      ))}
+    </group>
+  );
+}
+
+function EscortVehicle({
+  kind,
+  path,
+  playSec,
+  fireRadius,
+  delay,
+}: {
+  kind: "ambulance" | "police";
+  path: { station: Vec2; via: Vec2; fire: Vec2; phase: number };
+  playSec: number;
+  fireRadius: number;
+  delay: number;
+}) {
+  const ref = useRef<THREE.Group>(null);
+  const beaconA = useRef<THREE.Mesh>(null);
+  const beaconB = useRef<THREE.Mesh>(null);
+  const DRIVE = 14;
+
+  useFrame(({ clock }) => {
+    if (!ref.current) return;
+    const t = clock.getElapsedTime();
+    const local = Math.max(0, playSec - path.phase - delay);
+    const ratio = Math.min(1, local / DRIVE);
+    const seg1Len = Math.abs(path.via.x - path.station.x) + Math.abs(path.via.z - path.station.z);
+    const dx = path.fire.x - path.via.x;
+    const dz = path.fire.z - path.via.z;
+    const segLen2Full = Math.max(1, Math.sqrt(dx * dx + dz * dz));
+    const parkDist = Math.max(8, fireRadius * 0.95);
+    const parkRatio = Math.max(0, 1 - parkDist / segLen2Full);
+    const seg2Len = segLen2Full * parkRatio;
+    const total = seg1Len + seg2Len;
+    const traveled = ratio * total;
+    let x: number;
+    let z: number;
+    let yaw: number;
+    if (traveled < seg1Len) {
+      const r = traveled / Math.max(1, seg1Len);
+      x = path.station.x + (path.via.x - path.station.x) * r;
+      z = path.station.z + (path.via.z - path.station.z) * r;
+      yaw = Math.atan2(path.via.z - path.station.z, path.via.x - path.station.x);
+    } else {
+      const r = (traveled - seg1Len) / Math.max(1, seg2Len);
+      const px = path.via.x + dx * parkRatio;
+      const pz = path.via.z + dz * parkRatio;
+      x = path.via.x + (px - path.via.x) * r;
+      z = path.via.z + (pz - path.via.z) * r;
+      yaw = Math.atan2(dz, dx);
+    }
+    ref.current.position.set(x, 1.2, z);
+    ref.current.rotation.y = -yaw;
+    // alternating beacons
+    const flash = Math.sin(t * 18) > 0;
+    if (beaconA.current && beaconB.current) {
+      (beaconA.current.material as THREE.MeshBasicMaterial).opacity = flash ? 1 : 0.2;
+      (beaconB.current.material as THREE.MeshBasicMaterial).opacity = flash ? 0.2 : 1;
+    }
+  });
+
+  const isAmb = kind === "ambulance";
+  const bodyColor = isAmb ? "#f8fafc" : "#0f172a";
+  const trimColor = isAmb ? "#dc2626" : "#1e40af";
+  return (
+    <group ref={ref}>
+      {/* Cab */}
+      <mesh castShadow position={[1.0, 0, 0]}>
+        <boxGeometry args={[1.8, 1.6, 1.8]} />
+        <meshStandardMaterial color={bodyColor} metalness={0.5} roughness={0.35} />
+      </mesh>
+      <mesh position={[1.7, 0.4, 0]}>
+        <boxGeometry args={[0.4, 1.0, 1.55]} />
+        <meshStandardMaterial color="#0ea5e9" metalness={0.6} roughness={0.2} emissive="#0ea5e9" emissiveIntensity={0.2} />
+      </mesh>
+      {/* Body */}
+      <mesh castShadow position={[-1.0, 0.1, 0]}>
+        <boxGeometry args={[2.6, 1.8, 1.8]} />
+        <meshStandardMaterial color={bodyColor} metalness={0.5} roughness={0.35} />
+      </mesh>
+      {/* Trim stripe */}
+      <mesh position={[-0.2, -0.2, 0.91]}>
+        <planeGeometry args={[3.6, 0.45]} />
+        <meshBasicMaterial color={trimColor} />
+      </mesh>
+      <mesh position={[-0.2, -0.2, -0.91]} rotation={[0, Math.PI, 0]}>
+        <planeGeometry args={[3.6, 0.45]} />
+        <meshBasicMaterial color={trimColor} />
+      </mesh>
+      {/* Cross / star symbol */}
+      {isAmb && (
+        <mesh position={[-1.0, 0.4, 0.92]}>
+          <planeGeometry args={[0.7, 0.7]} />
+          <meshBasicMaterial color="#dc2626" />
+        </mesh>
+      )}
+      {/* Beacon bar */}
+      <mesh position={[1.0, 1.05, 0]}>
+        <boxGeometry args={[1.2, 0.25, 1.5]} />
+        <meshStandardMaterial color="#1f2937" />
+      </mesh>
+      <mesh ref={beaconA} position={[1.0, 1.25, 0.45]}>
+        <sphereGeometry args={[0.22, 8, 8]} />
+        <meshBasicMaterial color={isAmb ? "#ef4444" : "#3b82f6"} transparent opacity={1} />
+      </mesh>
+      <mesh ref={beaconB} position={[1.0, 1.25, -0.45]}>
+        <sphereGeometry args={[0.22, 8, 8]} />
+        <meshBasicMaterial color={isAmb ? "#3b82f6" : "#ef4444"} transparent opacity={1} />
+      </mesh>
+      <pointLight position={[1.0, 1.5, 0]} color={isAmb ? "#ef4444" : "#3b82f6"} intensity={1.4} distance={20} />
+      {/* Wheels */}
+      {[
+        [1.6, -0.7, 1.0],
+        [1.6, -0.7, -1.0],
+        [-1.6, -0.7, 1.0],
+        [-1.6, -0.7, -1.0],
+      ].map((p, i) => (
+        <mesh key={i} position={p as [number, number, number]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.42, 0.42, 0.4, 10]} />
+          <meshStandardMaterial color="#1f2937" />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 /* ===================================== SCENE ===================================== */
 
 export function CityScene(props: Props) {
@@ -1765,7 +2267,7 @@ export function CityScene(props: Props) {
     flyTo,
   } = props;
   const isNight = snapshot.hour < 6.5 || snapshot.hour > 19;
-  const signalTiming = 1; // visual cycle speed only — sim uses controls.signalTiming for math
+  const signalTiming = 1;
 
   // Sky color shifts with crisis
   let sky = isNight ? "#06080f" : "#0e1525";
@@ -1775,11 +2277,16 @@ export function CityScene(props: Props) {
   return (
     <Canvas
       shadows
+      dpr={[1, 1.75]}
       camera={{ position: [620, 520, 620], fov: 45, near: 1, far: 5000 }}
-      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping }}
+      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
     >
       <color attach="background" args={[sky]} />
       <fog attach="fog" args={[sky, 900, 2400]} />
+
+      {/* Stars at night */}
+      {isNight && <Stars radius={1200} depth={400} count={1800} factor={6} fade speed={0.5} />}
+
       <ambientLight intensity={isNight ? 0.22 : 0.5} />
       <hemisphereLight args={["#5a7090", "#0a0e1a", isNight ? 0.25 : 0.45]} />
       <directionalLight
@@ -1793,6 +2300,7 @@ export function CityScene(props: Props) {
 
       <Ground size={city.size} />
       <CampusOverlay bounds={city.campusBounds} />
+      <Parks city={city} />
       <Roads
         city={city}
         snapshot={snapshot}
@@ -1802,8 +2310,10 @@ export function CityScene(props: Props) {
         setHoveredRoadId={setHoveredRoadId}
       />
       <Trees city={city} />
+      <Streetlights city={city} hour={snapshot.hour} />
       <BuildingsLayer city={city} snapshot={snapshot} playSec={crisisPlaySeconds} />
       <Vehicles city={city} snapshot={snapshot} />
+      <Pedestrians city={city} snapshot={snapshot} />
       <TrafficLights city={city} signalTiming={signalTiming} />
 
       {/* Crisis layers */}
@@ -1817,6 +2327,11 @@ export function CityScene(props: Props) {
           />
           <EmberSparks fire={snapshot.fire} />
           <FireTrucks
+            fire={snapshot.fire}
+            stations={city.buildings.filter((b) => b.kind === "firestation")}
+            playSec={crisisPlaySeconds}
+          />
+          <EmergencyEscort
             fire={snapshot.fire}
             stations={city.buildings.filter((b) => b.kind === "firestation")}
             playSec={crisisPlaySeconds}
@@ -1855,6 +2370,18 @@ export function CityScene(props: Props) {
         maxPolarAngle={Math.PI / 2.05}
         target={[0, 0, 0]}
       />
+
+      {/* Cinematic post-processing */}
+      <EffectComposer multisampling={0}>
+        <Bloom
+          intensity={snapshot.crisis === "fire" ? 1.1 : 0.6}
+          luminanceThreshold={0.6}
+          luminanceSmoothing={0.2}
+          mipmapBlur
+        />
+        <BrightnessContrast brightness={0.0} contrast={0.08} />
+        <Vignette eskil={false} offset={0.2} darkness={0.85} />
+      </EffectComposer>
     </Canvas>
   );
 }

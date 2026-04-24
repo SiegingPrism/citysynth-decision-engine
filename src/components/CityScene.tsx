@@ -21,16 +21,16 @@ type Props = {
 
 /* ------------------------- realistic buildings ------------------------- */
 
-const BUILDING_COLORS: Record<string, [string, string]> = {
-  // [base/wall, accent/window glow]
-  office:      ["#3a4a66", "#fde68a"],
-  residential: ["#4a4458", "#fbbf24"],
-  campus:      ["#3d5a55", "#5cc8ff"],
-  cafeteria:   ["#7a5a3a", "#fbbf24"],
-  lecture:     ["#3a5a78", "#5cc8ff"],
-  library:     ["#4d3a78", "#a78bfa"],
-  parking:     ["#2a3340", "#64748b"],
-  firestation: ["#7a1f1f", "#fde68a"],
+const VARIANT_PALETTE: Record<BuildingVariant, { wall: string; accent: string; window: string; trim?: string; metalness: number; roughness: number }> = {
+  "skyscraper-glass":    { wall: "#1a2840", accent: "#0ea5e9", window: "#7dd3fc", trim: "#475569", metalness: 0.85, roughness: 0.18 },
+  "skyscraper-classic":  { wall: "#3a4258", accent: "#fde68a", window: "#fcd34d", trim: "#1f2937", metalness: 0.35, roughness: 0.55 },
+  "midrise-office":      { wall: "#3d4a60", accent: "#fbbf24", window: "#fde68a", trim: "#27313f", metalness: 0.45, roughness: 0.5 },
+  "brownstone":          { wall: "#5a3a28", accent: "#fbbf24", window: "#fde68a", trim: "#3a2418", metalness: 0.05, roughness: 0.95 },
+  "tower-residential":   { wall: "#46405a", accent: "#fbbf24", window: "#fde68a", trim: "#2a2538", metalness: 0.25, roughness: 0.7 },
+  "campus-modern":       { wall: "#3d5a72", accent: "#5cc8ff", window: "#7dd3fc", trim: "#1f2a38", metalness: 0.55, roughness: 0.35 },
+  "campus-brick":        { wall: "#7a3a2a", accent: "#fde68a", window: "#fbbf24", trim: "#3a1f18", metalness: 0.05, roughness: 0.95 },
+  "civic":               { wall: "#7a1f1f", accent: "#fde68a", window: "#fbbf24", trim: "#1f1a17", metalness: 0.3, roughness: 0.6 },
+  "industrial":          { wall: "#2a3340", accent: "#64748b", window: "#94a3b8", trim: "#1f2937", metalness: 0.4, roughness: 0.8 },
 };
 
 function buildingDamageState(

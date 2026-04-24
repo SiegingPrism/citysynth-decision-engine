@@ -460,24 +460,27 @@ function Roads({
   );
 }
 
-/* ------------------------------ trees / props ------------------------------ */
+/* ------------------------------ trees / parks ------------------------------ */
+
+const TREE_VARIANTS = ["oak", "pine", "palm"] as const;
+type TreeVariant = (typeof TREE_VARIANTS)[number];
 
 function Trees({ city }: { city: CityModel }) {
   const trees = useMemo(() => {
-    const out: { x: number; z: number; s: number }[] = [];
+    const out: { x: number; z: number; s: number; v: TreeVariant; rot: number }[] = [];
     let s = 19;
     const rnd = () => {
       s = (s * 1664525 + 1013904223) >>> 0;
       return s / 0xffffffff;
     };
-    const treeCount = Math.floor((city.size * city.size) / 1500);
+    const treeCount = Math.floor((city.size * city.size) / 1100);
     for (let i = 0; i < treeCount; i++) {
       const x = (rnd() - 0.5) * city.size;
       const z = (rnd() - 0.5) * city.size;
-      // place near intersections (offset onto sidewalk corners)
       const nx = Math.round(x / 60) * 60 + (rnd() > 0.5 ? 7 : -7);
       const nz = Math.round(z / 60) * 60 + (rnd() > 0.5 ? 7 : -7);
-      out.push({ x: nx, z: nz, s: 0.7 + rnd() * 0.5 });
+      const v = TREE_VARIANTS[Math.floor(rnd() * TREE_VARIANTS.length)];
+      out.push({ x: nx, z: nz, s: 0.7 + rnd() * 0.6, v, rot: rnd() * Math.PI });
     }
     return out;
   }, [city.size]);
@@ -485,86 +488,372 @@ function Trees({ city }: { city: CityModel }) {
   return (
     <group>
       {trees.map((t, i) => (
-        <group key={i} position={[t.x, 0, t.z]} scale={[t.s, t.s, t.s]}>
-          <mesh position={[0, 1.2, 0]}>
-            <cylinderGeometry args={[0.25, 0.35, 2.4, 6]} />
-            <meshStandardMaterial color="#3a2418" />
+        <TreeMesh key={i} x={t.x} z={t.z} scale={t.s} variant={t.v} rot={t.rot} />
+      ))}
+    </group>
+  );
+}
+
+function TreeMesh({ x, z, scale, variant, rot }: { x: number; z: number; scale: number; variant: TreeVariant; rot: number }) {
+  if (variant === "pine") {
+    return (
+      <group position={[x, 0, z]} scale={[scale, scale, scale]} rotation={[0, rot, 0]}>
+        <mesh position={[0, 1.2, 0]}>
+          <cylinderGeometry args={[0.22, 0.32, 2.4, 6]} />
+          <meshStandardMaterial color="#3a2418" />
+        </mesh>
+        <mesh position={[0, 3, 0]} castShadow>
+          <coneGeometry args={[1.4, 3.4, 8]} />
+          <meshStandardMaterial color="#1a5a30" roughness={0.95} />
+        </mesh>
+        <mesh position={[0, 4.6, 0]} castShadow>
+          <coneGeometry args={[1.0, 2.4, 8]} />
+          <meshStandardMaterial color="#1f6e3a" roughness={0.95} />
+        </mesh>
+      </group>
+    );
+  }
+  if (variant === "palm") {
+    return (
+      <group position={[x, 0, z]} scale={[scale, scale, scale]} rotation={[0, rot, 0]}>
+        <mesh position={[0, 2, 0]}>
+          <cylinderGeometry args={[0.18, 0.3, 4.4, 6]} />
+          <meshStandardMaterial color="#5a3a1a" />
+        </mesh>
+        {[0, 1, 2, 3, 4].map((i) => {
+          const a = (i / 5) * Math.PI * 2;
+          return (
+            <mesh key={i} position={[Math.cos(a) * 0.6, 4.4, Math.sin(a) * 0.6]} rotation={[0.4, a, 0]} castShadow>
+              <boxGeometry args={[2.6, 0.06, 0.5]} />
+              <meshStandardMaterial color="#2f7a3a" />
+            </mesh>
+          );
+        })}
+      </group>
+    );
+  }
+  // oak (default — round canopy)
+  return (
+    <group position={[x, 0, z]} scale={[scale, scale, scale]} rotation={[0, rot, 0]}>
+      <mesh position={[0, 1.2, 0]}>
+        <cylinderGeometry args={[0.28, 0.4, 2.6, 6]} />
+        <meshStandardMaterial color="#3a2418" />
+      </mesh>
+      <mesh position={[0, 3.4, 0]} castShadow>
+        <icosahedronGeometry args={[1.9, 1]} />
+        <meshStandardMaterial color="#1f6e3a" roughness={0.92} />
+      </mesh>
+      <mesh position={[0.7, 3.0, 0.4]} castShadow>
+        <icosahedronGeometry args={[1.1, 0]} />
+        <meshStandardMaterial color="#2a8048" roughness={0.92} />
+      </mesh>
+    </group>
+  );
+}
+
+/* ------------------------------ STREETLIGHTS ------------------------------ */
+
+function Streetlights({ city, hour }: { city: CityModel; hour: number }) {
+  const isNight = hour < 6.5 || hour > 19;
+  const positions = useMemo(() => {
+    const out: { x: number; z: number }[] = [];
+    let s = 91;
+    const rnd = () => {
+      s = (s * 1664525 + 1013904223) >>> 0;
+      return s / 0xffffffff;
+    };
+    const half = city.size / 2;
+    for (let x = -half + 30; x < half; x += 60) {
+      for (let z = -half + 30; z < half; z += 60) {
+        if (rnd() > 0.55) continue;
+        const ox = (rnd() > 0.5 ? 1 : -1) * 5;
+        const oz = (rnd() > 0.5 ? 1 : -1) * 5;
+        out.push({ x: x + ox, z: z + oz });
+      }
+    }
+    return out;
+  }, [city.size]);
+
+  return (
+    <group>
+      {positions.map((p, i) => (
+        <group key={i} position={[p.x, 0, p.z]}>
+          <mesh position={[0, 3, 0]}>
+            <cylinderGeometry args={[0.12, 0.18, 6, 6]} />
+            <meshStandardMaterial color="#1f2937" metalness={0.6} roughness={0.5} />
           </mesh>
-          <mesh position={[0, 3.2, 0]} castShadow>
-            <icosahedronGeometry args={[1.8, 0]} />
-            <meshStandardMaterial color="#1f6e3a" roughness={0.9} />
+          <mesh position={[0.6, 5.8, 0]}>
+            <boxGeometry args={[1.2, 0.18, 0.3]} />
+            <meshStandardMaterial color="#1f2937" />
           </mesh>
+          <mesh position={[1.1, 5.6, 0]}>
+            <sphereGeometry args={[0.32, 8, 8]} />
+            <meshBasicMaterial color={isNight ? "#fde68a" : "#374151"} />
+          </mesh>
+          {isNight && <pointLight position={[1.1, 5.6, 0]} color="#fde68a" intensity={0.45} distance={18} decay={2} />}
         </group>
       ))}
     </group>
   );
 }
 
-/* ------------------------------ vehicles ------------------------------ */
+/* ------------------------------ PARKS ------------------------------ */
+
+function Parks({ city }: { city: CityModel }) {
+  // 3 procedural park patches off the campus
+  const parks = useMemo(
+    () => [
+      { x: -260, z: 60, w: 80, d: 80 },
+      { x: 320, z: -160, w: 70, d: 70 },
+      { x: -120, z: -340, w: 90, d: 60 },
+    ].filter((p) => Math.abs(p.x) < city.size / 2 - 60 && Math.abs(p.z) < city.size / 2 - 60),
+    [city.size],
+  );
+  return (
+    <group>
+      {parks.map((p, i) => (
+        <group key={i} position={[p.x, 0, p.z]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]} receiveShadow>
+            <planeGeometry args={[p.w, p.d]} />
+            <meshStandardMaterial color="#1a4a28" roughness={0.95} />
+          </mesh>
+          {/* Pond */}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.08, 0]}>
+            <circleGeometry args={[Math.min(p.w, p.d) * 0.18, 32]} />
+            <meshStandardMaterial color="#1d4ed8" metalness={0.7} roughness={0.2} emissive="#3b82f6" emissiveIntensity={0.15} />
+          </mesh>
+          {/* Trees ringing the park */}
+          {Array.from({ length: 8 }).map((_, j) => {
+            const a = (j / 8) * Math.PI * 2;
+            const r = Math.min(p.w, p.d) * 0.42;
+            return (
+              <TreeMesh
+                key={j}
+                x={Math.cos(a) * r}
+                z={Math.sin(a) * r}
+                scale={1 + (j % 3) * 0.2}
+                variant={j % 2 === 0 ? "oak" : "pine"}
+                rot={a}
+              />
+            );
+          })}
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/* ------------------------------ vehicles (detailed cars) ------------------------------ */
+
+const CAR_PALETTE = [
+  "#fde68a", // taxi yellow
+  "#5cc8ff", // light blue
+  "#dc2626", // red
+  "#f8fafc", // white
+  "#1f2937", // dark
+  "#a78bfa", // purple
+  "#22c55e", // green
+];
 
 function Vehicles({ city, snapshot }: { city: CityModel; snapshot: SimSnapshot }) {
   const data = useMemo(() => {
-    const items: Array<{ road: typeof city.roads[number]; offset: number; speed: number; color: number }> = [];
+    const items: Array<{ road: typeof city.roads[number]; offset: number; speed: number; colorIdx: number; lane: number }> = [];
+    let seed = 7;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0xffffffff;
+    };
     for (const road of city.roads) {
       const util = snapshot.roadFlow[road.id] ?? 0;
       if (util >= 1) continue;
-      const count = Math.max(0, Math.floor(util * 6));
+      const count = Math.max(0, Math.floor(util * 7));
       const speed = Math.max(0.04, 1 - util) * 0.5;
       for (let i = 0; i < count; i++) {
-        items.push({ road, offset: i / count, speed, color: i % 4 });
+        items.push({
+          road,
+          offset: i / count,
+          speed,
+          colorIdx: Math.floor(rnd() * CAR_PALETTE.length),
+          lane: i % 2 === 0 ? 1 : -1,
+        });
       }
     }
     return items;
   }, [city, snapshot]);
 
-  const ref = useRef<THREE.InstancedMesh>(null);
+  // Three instanced meshes: body, windshield strip, headlights
+  const bodyRef = useRef<THREE.InstancedMesh>(null);
+  const roofRef = useRef<THREE.InstancedMesh>(null);
+  const headRef = useRef<THREE.InstancedMesh>(null);
+  const tailRef = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
-  const palette = useMemo(
-    () => [
-      new THREE.Color("#fde68a"),
-      new THREE.Color("#5cc8ff"),
-      new THREE.Color("#ff7a59"),
-      new THREE.Color("#a78bfa"),
-    ],
-    [],
-  );
 
-  // Set per-instance colors once when data changes
   useEffect(() => {
-    if (!ref.current) return;
+    if (!bodyRef.current) return;
     data.forEach((d, i) => {
-      ref.current!.setColorAt(i, palette[d.color]);
+      bodyRef.current!.setColorAt(i, new THREE.Color(CAR_PALETTE[d.colorIdx]));
     });
-    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
-  }, [data, palette]);
+    if (bodyRef.current.instanceColor) bodyRef.current.instanceColor.needsUpdate = true;
+  }, [data]);
 
   useFrame(({ clock }) => {
-    if (!ref.current) return;
+    if (!bodyRef.current || !roofRef.current || !headRef.current || !tailRef.current) return;
     const t = clock.getElapsedTime();
     data.forEach((d, i) => {
       const p = (d.offset + t * d.speed) % 1;
       const x = d.road.a.x + (d.road.b.x - d.road.a.x) * p;
       const z = d.road.a.z + (d.road.b.z - d.road.a.z) * p;
       const angle = Math.atan2(d.road.b.z - d.road.a.z, d.road.b.x - d.road.a.x);
-      dummy.position.set(x, 1.0, z);
+      // lane offset (perpendicular)
+      const lx = Math.cos(angle + Math.PI / 2) * d.lane * 1.4;
+      const lz = Math.sin(angle + Math.PI / 2) * d.lane * 1.4;
+
+      // body
+      dummy.position.set(x + lx, 0.7, z + lz);
       dummy.rotation.y = -angle;
+      dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
-      ref.current!.setMatrixAt(i, dummy.matrix);
+      bodyRef.current!.setMatrixAt(i, dummy.matrix);
+
+      // roof (smaller cab on top)
+      dummy.position.set(x + lx - Math.cos(angle) * 0.2, 1.4, z + lz - Math.sin(angle) * 0.2);
+      dummy.updateMatrix();
+      roofRef.current!.setMatrixAt(i, dummy.matrix);
+
+      // headlights — push forward
+      const fx = Math.cos(angle) * 1.7;
+      const fz = Math.sin(angle) * 1.7;
+      dummy.position.set(x + lx + fx, 0.65, z + lz + fz);
+      dummy.updateMatrix();
+      headRef.current!.setMatrixAt(i, dummy.matrix);
+
+      // taillights — push back
+      dummy.position.set(x + lx - fx, 0.65, z + lz - fz);
+      dummy.updateMatrix();
+      tailRef.current!.setMatrixAt(i, dummy.matrix);
     });
-    ref.current.count = data.length;
-    ref.current.instanceMatrix.needsUpdate = true;
+    bodyRef.current.count = data.length;
+    roofRef.current.count = data.length;
+    headRef.current.count = data.length;
+    tailRef.current.count = data.length;
+    bodyRef.current.instanceMatrix.needsUpdate = true;
+    roofRef.current.instanceMatrix.needsUpdate = true;
+    headRef.current.instanceMatrix.needsUpdate = true;
+    tailRef.current.instanceMatrix.needsUpdate = true;
   });
 
   if (data.length === 0) return null;
+  const n = Math.max(1, data.length);
 
   return (
-    <instancedMesh
-      ref={ref}
-      args={[undefined, undefined, Math.max(1, data.length)]}
-    >
-      <boxGeometry args={[3.6, 1.6, 1.8]} />
-      <meshStandardMaterial color="#ffffff" metalness={0.6} roughness={0.4} />
-    </instancedMesh>
+    <group>
+      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]} castShadow>
+        <boxGeometry args={[3.6, 1.0, 1.7]} />
+        <meshStandardMaterial metalness={0.65} roughness={0.32} />
+      </instancedMesh>
+      <instancedMesh ref={roofRef} args={[undefined, undefined, n]}>
+        <boxGeometry args={[2.2, 0.7, 1.55]} />
+        <meshStandardMaterial color="#0ea5e9" metalness={0.7} roughness={0.18} transparent opacity={0.75} emissive="#0ea5e9" emissiveIntensity={0.15} />
+      </instancedMesh>
+      <instancedMesh ref={headRef} args={[undefined, undefined, n]}>
+        <boxGeometry args={[0.3, 0.3, 1.5]} />
+        <meshBasicMaterial color="#fef9c3" />
+      </instancedMesh>
+      <instancedMesh ref={tailRef} args={[undefined, undefined, n]}>
+        <boxGeometry args={[0.3, 0.3, 1.5]} />
+        <meshBasicMaterial color="#ef4444" />
+      </instancedMesh>
+    </group>
+  );
+}
+
+/* ------------------------------ PEDESTRIANS ------------------------------ */
+
+function Pedestrians({ city, snapshot }: { city: CityModel; snapshot: SimSnapshot }) {
+  // Walk along sidewalks parallel to roads. Limit count for perf.
+  const data = useMemo(() => {
+    const items: Array<{ road: typeof city.roads[number]; offset: number; speed: number; side: number; color: number }> = [];
+    let seed = 31;
+    const rnd = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0xffffffff;
+    };
+    // roughly proportional to crowd load
+    const total = Math.floor(60 + snapshot.crowdLoad * 180);
+    for (let n = 0; n < total; n++) {
+      const road = city.roads[Math.floor(rnd() * city.roads.length)];
+      items.push({
+        road,
+        offset: rnd(),
+        speed: 0.04 + rnd() * 0.04,
+        side: rnd() > 0.5 ? 1 : -1,
+        color: Math.floor(rnd() * 5),
+      });
+    }
+    return items;
+  }, [city.roads, snapshot.crowdLoad]);
+
+  const bodyRef = useRef<THREE.InstancedMesh>(null);
+  const headRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const palette = useMemo(
+    () => [
+      new THREE.Color("#5cc8ff"),
+      new THREE.Color("#fbbf24"),
+      new THREE.Color("#ef4444"),
+      new THREE.Color("#a78bfa"),
+      new THREE.Color("#22c55e"),
+    ],
+    [],
+  );
+
+  useEffect(() => {
+    if (!bodyRef.current) return;
+    data.forEach((d, i) => bodyRef.current!.setColorAt(i, palette[d.color]));
+    if (bodyRef.current.instanceColor) bodyRef.current.instanceColor.needsUpdate = true;
+  }, [data, palette]);
+
+  useFrame(({ clock }) => {
+    if (!bodyRef.current || !headRef.current) return;
+    const t = clock.getElapsedTime();
+    data.forEach((d, i) => {
+      const p = (d.offset + t * d.speed) % 1;
+      const x = d.road.a.x + (d.road.b.x - d.road.a.x) * p;
+      const z = d.road.a.z + (d.road.b.z - d.road.a.z) * p;
+      const angle = Math.atan2(d.road.b.z - d.road.a.z, d.road.b.x - d.road.a.x);
+      // sidewalk offset
+      const sx = Math.cos(angle + Math.PI / 2) * d.side * 5;
+      const sz = Math.sin(angle + Math.PI / 2) * d.side * 5;
+      const bob = Math.sin(t * 8 + i) * 0.08;
+      dummy.position.set(x + sx, 0.8 + bob, z + sz);
+      dummy.rotation.y = -angle + (d.side > 0 ? 0 : Math.PI);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      bodyRef.current!.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(x + sx, 1.7 + bob, z + sz);
+      dummy.updateMatrix();
+      headRef.current!.setMatrixAt(i, dummy.matrix);
+    });
+    bodyRef.current.count = data.length;
+    headRef.current.count = data.length;
+    bodyRef.current.instanceMatrix.needsUpdate = true;
+    headRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  if (data.length === 0) return null;
+  const n = Math.max(1, data.length);
+  return (
+    <group>
+      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]} castShadow>
+        <capsuleGeometry args={[0.3, 0.9, 4, 6]} />
+        <meshStandardMaterial roughness={0.6} />
+      </instancedMesh>
+      <instancedMesh ref={headRef} args={[undefined, undefined, n]}>
+        <sphereGeometry args={[0.28, 8, 8]} />
+        <meshStandardMaterial color="#fde68a" roughness={0.7} />
+      </instancedMesh>
+    </group>
   );
 }
 

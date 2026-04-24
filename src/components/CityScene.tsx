@@ -2375,16 +2375,10 @@ export function CityScene(props: Props) {
       {/* Cinematic post-processing */}
       <EffectComposer multisampling={0}>
         <Bloom
-          intensity={snapshot.crisis === "fire" ? 1.1 : 0.65}
-          luminanceThreshold={0.55}
+          intensity={snapshot.crisis === "fire" ? 1.1 : 0.6}
+          luminanceThreshold={0.6}
           luminanceSmoothing={0.2}
           mipmapBlur
-        />
-        <ChromaticAberration
-          blendFunction={BlendFunction.NORMAL}
-          offset={[0.0006, 0.0006] as unknown as [number, number]}
-          radialModulation={false}
-          modulationOffset={0}
         />
         <BrightnessContrast brightness={0.0} contrast={0.08} />
         <Vignette eskil={false} offset={0.2} darkness={0.85} />

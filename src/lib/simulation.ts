@@ -5,6 +5,17 @@
 
 export type Vec2 = { x: number; z: number };
 
+export type BuildingVariant =
+  | "skyscraper-glass"
+  | "skyscraper-classic"
+  | "midrise-office"
+  | "brownstone"
+  | "tower-residential"
+  | "campus-modern"
+  | "campus-brick"
+  | "civic"
+  | "industrial";
+
 export type Building = {
   id: string;
   pos: Vec2;
@@ -12,6 +23,8 @@ export type Building = {
   d: number;
   h: number;
   kind: "office" | "residential" | "campus" | "cafeteria" | "lecture" | "library" | "parking" | "firestation";
+  variant: BuildingVariant;
+  rotY: number;
   capacity: number;
   label?: string;
 };

@@ -1686,6 +1686,11 @@ export function CityScene(props: Props) {
             stations={city.buildings.filter((b) => b.kind === "firestation")}
             playSec={crisisPlaySeconds}
           />
+          <IgnitionHeatmap
+            fire={snapshot.fire}
+            buildings={city.buildings}
+            playSec={crisisPlaySeconds}
+          />
         </>
       )}
       {snapshot.flood && (

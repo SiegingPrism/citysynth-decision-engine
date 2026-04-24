@@ -2100,6 +2100,160 @@ function CrisisCameraFX({ snapshot }: { snapshot: SimSnapshot }) {
   return null;
 }
 
+/* ------------------------- POLICE + AMBULANCE ESCORT ------------------------- */
+
+function EmergencyEscort({
+  fire,
+  stations,
+  playSec,
+}: {
+  fire: NonNullable<SimSnapshot["fire"]>;
+  stations: Building[];
+  playSec: number;
+}) {
+  // For each station, dispatch an ambulance + police following the fire truck path
+  const paths = useMemo(() => {
+    return stations.slice(0, 2).map((s, i) => {
+      const via: Vec2 = { x: fire.pos.x, z: s.pos.z };
+      return { station: s.pos, via, fire: fire.pos, phase: i * 0.5 };
+    });
+  }, [stations, fire.pos.x, fire.pos.z]);
+
+  return (
+    <group>
+      {paths.map((p, i) => (
+        <EscortVehicle key={`amb-${i}`} kind="ambulance" path={p} playSec={playSec} fireRadius={fire.radius} delay={2 + i * 0.4} />
+      ))}
+      {paths.map((p, i) => (
+        <EscortVehicle key={`pol-${i}`} kind="police" path={p} playSec={playSec} fireRadius={fire.radius} delay={0.4 + i * 0.4} />
+      ))}
+    </group>
+  );
+}
+
+function EscortVehicle({
+  kind,
+  path,
+  playSec,
+  fireRadius,
+  delay,
+}: {
+  kind: "ambulance" | "police";
+  path: { station: Vec2; via: Vec2; fire: Vec2; phase: number };
+  playSec: number;
+  fireRadius: number;
+  delay: number;
+}) {
+  const ref = useRef<THREE.Group>(null);
+  const beaconA = useRef<THREE.Mesh>(null);
+  const beaconB = useRef<THREE.Mesh>(null);
+  const DRIVE = 14;
+
+  useFrame(({ clock }) => {
+    if (!ref.current) return;
+    const t = clock.getElapsedTime();
+    const local = Math.max(0, playSec - path.phase - delay);
+    const ratio = Math.min(1, local / DRIVE);
+    const seg1Len = Math.abs(path.via.x - path.station.x) + Math.abs(path.via.z - path.station.z);
+    const dx = path.fire.x - path.via.x;
+    const dz = path.fire.z - path.via.z;
+    const segLen2Full = Math.max(1, Math.sqrt(dx * dx + dz * dz));
+    const parkDist = Math.max(8, fireRadius * 0.95);
+    const parkRatio = Math.max(0, 1 - parkDist / segLen2Full);
+    const seg2Len = segLen2Full * parkRatio;
+    const total = seg1Len + seg2Len;
+    const traveled = ratio * total;
+    let x: number;
+    let z: number;
+    let yaw: number;
+    if (traveled < seg1Len) {
+      const r = traveled / Math.max(1, seg1Len);
+      x = path.station.x + (path.via.x - path.station.x) * r;
+      z = path.station.z + (path.via.z - path.station.z) * r;
+      yaw = Math.atan2(path.via.z - path.station.z, path.via.x - path.station.x);
+    } else {
+      const r = (traveled - seg1Len) / Math.max(1, seg2Len);
+      const px = path.via.x + dx * parkRatio;
+      const pz = path.via.z + dz * parkRatio;
+      x = path.via.x + (px - path.via.x) * r;
+      z = path.via.z + (pz - path.via.z) * r;
+      yaw = Math.atan2(dz, dx);
+    }
+    ref.current.position.set(x, 1.2, z);
+    ref.current.rotation.y = -yaw;
+    // alternating beacons
+    const flash = Math.sin(t * 18) > 0;
+    if (beaconA.current && beaconB.current) {
+      (beaconA.current.material as THREE.MeshBasicMaterial).opacity = flash ? 1 : 0.2;
+      (beaconB.current.material as THREE.MeshBasicMaterial).opacity = flash ? 0.2 : 1;
+    }
+  });
+
+  const isAmb = kind === "ambulance";
+  const bodyColor = isAmb ? "#f8fafc" : "#0f172a";
+  const trimColor = isAmb ? "#dc2626" : "#1e40af";
+  return (
+    <group ref={ref}>
+      {/* Cab */}
+      <mesh castShadow position={[1.0, 0, 0]}>
+        <boxGeometry args={[1.8, 1.6, 1.8]} />
+        <meshStandardMaterial color={bodyColor} metalness={0.5} roughness={0.35} />
+      </mesh>
+      <mesh position={[1.7, 0.4, 0]}>
+        <boxGeometry args={[0.4, 1.0, 1.55]} />
+        <meshStandardMaterial color="#0ea5e9" metalness={0.6} roughness={0.2} emissive="#0ea5e9" emissiveIntensity={0.2} />
+      </mesh>
+      {/* Body */}
+      <mesh castShadow position={[-1.0, 0.1, 0]}>
+        <boxGeometry args={[2.6, 1.8, 1.8]} />
+        <meshStandardMaterial color={bodyColor} metalness={0.5} roughness={0.35} />
+      </mesh>
+      {/* Trim stripe */}
+      <mesh position={[-0.2, -0.2, 0.91]}>
+        <planeGeometry args={[3.6, 0.45]} />
+        <meshBasicMaterial color={trimColor} />
+      </mesh>
+      <mesh position={[-0.2, -0.2, -0.91]} rotation={[0, Math.PI, 0]}>
+        <planeGeometry args={[3.6, 0.45]} />
+        <meshBasicMaterial color={trimColor} />
+      </mesh>
+      {/* Cross / star symbol */}
+      {isAmb && (
+        <mesh position={[-1.0, 0.4, 0.92]}>
+          <planeGeometry args={[0.7, 0.7]} />
+          <meshBasicMaterial color="#dc2626" />
+        </mesh>
+      )}
+      {/* Beacon bar */}
+      <mesh position={[1.0, 1.05, 0]}>
+        <boxGeometry args={[1.2, 0.25, 1.5]} />
+        <meshStandardMaterial color="#1f2937" />
+      </mesh>
+      <mesh ref={beaconA} position={[1.0, 1.25, 0.45]}>
+        <sphereGeometry args={[0.22, 8, 8]} />
+        <meshBasicMaterial color={isAmb ? "#ef4444" : "#3b82f6"} transparent opacity={1} />
+      </mesh>
+      <mesh ref={beaconB} position={[1.0, 1.25, -0.45]}>
+        <sphereGeometry args={[0.22, 8, 8]} />
+        <meshBasicMaterial color={isAmb ? "#3b82f6" : "#ef4444"} transparent opacity={1} />
+      </mesh>
+      <pointLight position={[1.0, 1.5, 0]} color={isAmb ? "#ef4444" : "#3b82f6"} intensity={1.4} distance={20} />
+      {/* Wheels */}
+      {[
+        [1.6, -0.7, 1.0],
+        [1.6, -0.7, -1.0],
+        [-1.6, -0.7, 1.0],
+        [-1.6, -0.7, -1.0],
+      ].map((p, i) => (
+        <mesh key={i} position={p as [number, number, number]} rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.42, 0.42, 0.4, 10]} />
+          <meshStandardMaterial color="#1f2937" />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 /* ===================================== SCENE ===================================== */
 
 export function CityScene(props: Props) {
@@ -2114,7 +2268,7 @@ export function CityScene(props: Props) {
     flyTo,
   } = props;
   const isNight = snapshot.hour < 6.5 || snapshot.hour > 19;
-  const signalTiming = 1; // visual cycle speed only — sim uses controls.signalTiming for math
+  const signalTiming = 1;
 
   // Sky color shifts with crisis
   let sky = isNight ? "#06080f" : "#0e1525";
@@ -2124,11 +2278,16 @@ export function CityScene(props: Props) {
   return (
     <Canvas
       shadows
+      dpr={[1, 1.75]}
       camera={{ position: [620, 520, 620], fov: 45, near: 1, far: 5000 }}
-      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping }}
+      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
     >
       <color attach="background" args={[sky]} />
       <fog attach="fog" args={[sky, 900, 2400]} />
+
+      {/* Stars at night */}
+      {isNight && <Stars radius={1200} depth={400} count={1800} factor={6} fade speed={0.5} />}
+
       <ambientLight intensity={isNight ? 0.22 : 0.5} />
       <hemisphereLight args={["#5a7090", "#0a0e1a", isNight ? 0.25 : 0.45]} />
       <directionalLight
@@ -2142,6 +2301,7 @@ export function CityScene(props: Props) {
 
       <Ground size={city.size} />
       <CampusOverlay bounds={city.campusBounds} />
+      <Parks city={city} />
       <Roads
         city={city}
         snapshot={snapshot}
@@ -2151,8 +2311,10 @@ export function CityScene(props: Props) {
         setHoveredRoadId={setHoveredRoadId}
       />
       <Trees city={city} />
+      <Streetlights city={city} hour={snapshot.hour} />
       <BuildingsLayer city={city} snapshot={snapshot} playSec={crisisPlaySeconds} />
       <Vehicles city={city} snapshot={snapshot} />
+      <Pedestrians city={city} snapshot={snapshot} />
       <TrafficLights city={city} signalTiming={signalTiming} />
 
       {/* Crisis layers */}
@@ -2166,6 +2328,11 @@ export function CityScene(props: Props) {
           />
           <EmberSparks fire={snapshot.fire} />
           <FireTrucks
+            fire={snapshot.fire}
+            stations={city.buildings.filter((b) => b.kind === "firestation")}
+            playSec={crisisPlaySeconds}
+          />
+          <EmergencyEscort
             fire={snapshot.fire}
             stations={city.buildings.filter((b) => b.kind === "firestation")}
             playSec={crisisPlaySeconds}
@@ -2204,6 +2371,24 @@ export function CityScene(props: Props) {
         maxPolarAngle={Math.PI / 2.05}
         target={[0, 0, 0]}
       />
+
+      {/* Cinematic post-processing */}
+      <EffectComposer multisampling={0}>
+        <Bloom
+          intensity={snapshot.crisis === "fire" ? 1.1 : 0.65}
+          luminanceThreshold={0.55}
+          luminanceSmoothing={0.2}
+          mipmapBlur
+        />
+        <ChromaticAberration
+          blendFunction={BlendFunction.NORMAL}
+          offset={[0.0006, 0.0006] as unknown as [number, number]}
+          radialModulation={false}
+          modulationOffset={0}
+        />
+        <BrightnessContrast brightness={0.0} contrast={0.08} />
+        <Vignette eskil={false} offset={0.2} darkness={0.85} />
+      </EffectComposer>
     </Canvas>
   );
 }

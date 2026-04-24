@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, Html } from "@react-three/drei";
+import { OrbitControls, Html, Stars } from "@react-three/drei";
+import { EffectComposer, Bloom, Vignette, ChromaticAberration, BrightnessContrast } from "@react-three/postprocessing";
+import { BlendFunction } from "postprocessing";
 import * as THREE from "three";
-import type { Building, CityModel, SimSnapshot, Vec2 } from "@/lib/simulation";
+import type { Building, BuildingVariant, CityModel, SimSnapshot, Vec2 } from "@/lib/simulation";
 
 type Props = {
   city: CityModel;

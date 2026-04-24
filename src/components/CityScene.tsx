@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { OrbitControls, Html } from "@react-three/drei";
 import * as THREE from "three";
 import type { Building, CityModel, SimSnapshot, Vec2 } from "@/lib/simulation";
 
@@ -673,6 +673,141 @@ function FireSystem({
         decay={1.6}
       />
     </>
+  );
+}
+
+/* ------------------ TIME-TO-IGNITION HEATMAP ------------------- */
+// Procedural grid around the fire epicenter. Each cell is colored by the
+// estimated minutes until that point ignites given current spread dynamics.
+// Also flags the next 3 likely structures to catch.
+
+function IgnitionHeatmap({
+  fire,
+  buildings,
+  playSec,
+}: {
+  fire: NonNullable<SimSnapshot["fire"]>;
+  buildings: Building[];
+  playSec: number;
+}) {
+  const GRID = 22; // cells per axis
+  const span = fire.predictedRadius * 2.2;
+  const cell = span / GRID;
+
+  // sweep clock for the scanning bar
+  const sweep = useRef<THREE.Mesh>(null);
+  useFrame(({ clock }) => {
+    if (!sweep.current) return;
+    const t = clock.getElapsedTime();
+    sweep.current.rotation.z = (t * 0.6) % (Math.PI * 2);
+  });
+
+  // Build a single InstancedMesh of square tiles colored per-cell
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+
+  const cells = useMemo(() => {
+    const out: { x: number; z: number; t: number; inside: boolean }[] = [];
+    const r = fire.predictedRadius;
+    for (let i = 0; i < GRID; i++) {
+      for (let j = 0; j < GRID; j++) {
+        const x = fire.pos.x - r * 1.1 + (i + 0.5) * cell;
+        const z = fire.pos.z - r * 1.1 + (j + 0.5) * cell;
+        const dx = x - fire.pos.x;
+        const dz = z - fire.pos.z;
+        const d = Math.sqrt(dx * dx + dz * dz);
+        if (d > r * 1.05) continue;
+        // ignition delay (sim-minutes from "now") — same model as building damage
+        const tMin = (d / Math.max(1, fire.radius)) * 18 / 60 * 30; // ~minutes
+        out.push({ x, z, t: tMin, inside: d <= fire.radius });
+      }
+    }
+    return out;
+  }, [fire.pos.x, fire.pos.z, fire.radius, fire.predictedRadius, cell]);
+
+  useEffect(() => {
+    if (!meshRef.current) return;
+    const color = new THREE.Color();
+    cells.forEach((c, idx) => {
+      dummy.position.set(c.x, 0.32, c.z);
+      dummy.rotation.set(-Math.PI / 2, 0, 0);
+      dummy.scale.set(cell * 0.92, cell * 0.92, 1);
+      dummy.updateMatrix();
+      meshRef.current!.setMatrixAt(idx, dummy.matrix);
+      // color: red (now) → orange → yellow → cool (later)
+      const k = Math.min(1, c.t / 30);
+      const hue = 0.0 + k * 0.13; // 0 (red) → ~0.13 (yellow)
+      color.setHSL(hue, 0.95, 0.5 + (1 - k) * 0.1);
+      meshRef.current!.setColorAt(idx, color);
+    });
+    meshRef.current.count = cells.length;
+    meshRef.current.instanceMatrix.needsUpdate = true;
+    if (meshRef.current.instanceColor) meshRef.current.instanceColor.needsUpdate = true;
+  }, [cells, cell, dummy]);
+
+  // Next likely structures = unburnt buildings just outside current radius,
+  // sorted by ignition delay
+  const nextTargets = useMemo(() => {
+    const cands = buildings
+      .map((b) => {
+        const dx = b.pos.x - fire.pos.x;
+        const dz = b.pos.z - fire.pos.z;
+        const d = Math.sqrt(dx * dx + dz * dz);
+        const delaySec = (d / Math.max(1, fire.radius)) * 18;
+        const minutesToIgnition = Math.max(0, (delaySec - playSec)) * (30 / 60); // sim-min
+        return { b, d, minutesToIgnition, willBurn: d <= fire.predictedRadius + 4, alreadyBurning: playSec > delaySec && d <= fire.radius + 8 };
+      })
+      .filter((c) => c.willBurn && !c.alreadyBurning && c.b.kind !== "parking")
+      .sort((a, b) => a.minutesToIgnition - b.minutesToIgnition)
+      .slice(0, 3);
+    return cands;
+  }, [buildings, fire.pos.x, fire.pos.z, fire.radius, fire.predictedRadius, playSec]);
+
+  return (
+    <group>
+      {/* heat tiles */}
+      <instancedMesh
+        ref={meshRef}
+        args={[undefined, undefined, GRID * GRID]}
+      >
+        <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial
+          transparent
+          opacity={0.42}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </instancedMesh>
+
+      {/* radar sweep wedge */}
+      <mesh ref={sweep} position={[fire.pos.x, 0.55, fire.pos.z]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0, fire.predictedRadius, 48, 1, 0, Math.PI / 6]} />
+        <meshBasicMaterial color="#fde68a" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
+      </mesh>
+
+      {/* next-likely structure markers */}
+      {nextTargets.map((c, i) => (
+        <group key={c.b.id} position={[c.b.pos.x, c.b.h + 8, c.b.pos.z]}>
+          <mesh>
+            <coneGeometry args={[3, 6, 12]} />
+            <meshBasicMaterial color="#fbbf24" />
+          </mesh>
+          <pointLight color="#fbbf24" intensity={1.4} distance={40} />
+          <Html
+            center
+            distanceFactor={140}
+            style={{ pointerEvents: "none" }}
+          >
+            <div className="px-2 py-1 rounded-md bg-black/80 border border-amber-400/60 text-[10px] font-mono uppercase tracking-wider text-amber-200 whitespace-nowrap shadow-lg">
+              <div className="text-amber-300">#{i + 1} · {c.b.label ?? c.b.kind}</div>
+              <div className="opacity-70">
+                ETI ~ {c.minutesToIgnition < 1 ? "<1" : c.minutesToIgnition.toFixed(0)}m
+              </div>
+            </div>
+          </Html>
+        </group>
+      ))}
+    </group>
   );
 }
 
@@ -1684,6 +1819,11 @@ export function CityScene(props: Props) {
           <FireTrucks
             fire={snapshot.fire}
             stations={city.buildings.filter((b) => b.kind === "firestation")}
+            playSec={crisisPlaySeconds}
+          />
+          <IgnitionHeatmap
+            fire={snapshot.fire}
+            buildings={city.buildings}
             playSec={crisisPlaySeconds}
           />
         </>

@@ -67,6 +67,18 @@ function TwinPage() {
     preset?: "overview" | "tactical" | "street";
     nonce: number;
   } | null>(null);
+  const [liveData, setLiveData] = useState(false);
+  const { sample: liveSample, deltas: liveDeltas } = useLiveData(liveData);
+
+  // When live data is on, gently steer simulation inputs toward the feed
+  useEffect(() => {
+    if (!liveData) return;
+    setControls((c) => ({
+      ...c,
+      trafficVolume: c.trafficVolume + (liveDeltas.trafficVolume - c.trafficVolume) * 0.25,
+      campusEventLoad: c.campusEventLoad + (liveDeltas.campusEventLoad - c.campusEventLoad) * 0.25,
+    }));
+  }, [liveData, liveDeltas.trafficVolume, liveDeltas.campusEventLoad]);
 
   // Reset crisis play clock when crisis changes
   useEffect(() => {

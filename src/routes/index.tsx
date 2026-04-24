@@ -11,6 +11,9 @@ import { EventLog } from "@/components/EventLog";
 import { ResilienceGauge } from "@/components/ResilienceGauge";
 import { AIVerdict } from "@/components/AIVerdict";
 import { IntroOverlay } from "@/components/IntroOverlay";
+import { IncidentCommander } from "@/components/IncidentCommander";
+import { LiveDataPanel } from "@/components/LiveDataPanel";
+import { useLiveData } from "@/hooks/useLiveData";
 import {
   buildCity,
   project,

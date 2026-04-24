@@ -342,6 +342,16 @@ function TwinPage() {
           onFocus={(p) => setFlyTo({ x: p.x, z: p.z, preset: "tactical", nonce: Date.now() })}
         />
 
+        <LiveDataPanel active={liveData} onToggle={setLiveData} sample={liveSample} />
+
+        <IncidentCommander
+          city={city}
+          snapshot={snapshot}
+          crisis={crisis}
+          resilience={1 - (snapshot.congestion * 0.4 + snapshot.pollution * 0.3 + (crisis !== "none" ? 0.3 : 0))}
+          liveData={liveData}
+        />
+
         <CrisisOps
           city={city}
           snapshot={snapshot}

@@ -81,38 +81,48 @@ function Building3D({
   hour: number;
   state: ReturnType<typeof buildingDamageState>;
 }) {
-  const [base, glow] = BUILDING_COLORS[b.kind] ?? BUILDING_COLORS.office;
+  const palette = VARIANT_PALETTE[b.variant] ?? VARIANT_PALETTE["midrise-office"];
   const isNight = hour < 6.5 || hour > 19;
-  const lightProb = isNight ? 0.7 : 0.15;
+  const lightProb = isNight ? 0.7 : 0.18;
 
-  const { stories, windowsPerFloor } = useMemo(() => {
-    const stories = Math.max(2, Math.floor(b.h / 3.5));
-    const windowsPerFloor = Math.max(2, Math.floor(b.w / 5));
-    return { stories, windowsPerFloor };
-  }, [b.h, b.w]);
+  const { stories } = useMemo(() => {
+    const floorH =
+      b.variant === "skyscraper-glass" || b.variant === "skyscraper-classic" ? 4.5 : 3.5;
+    return { stories: Math.max(2, Math.floor(b.h / floorH)) };
+  }, [b.h, b.variant]);
 
-  // pre-randomize lit windows per building (stable)
+  // Stable per-building randomness for window lights & rooftop props
   const litMatrix = useMemo(() => {
     const seed = Math.abs(Math.floor(b.pos.x * 13 + b.pos.z * 7));
     const out: number[] = [];
     let s = seed;
-    for (let i = 0; i < stories * windowsPerFloor * 4; i++) {
+    for (let i = 0; i < stories * 8; i++) {
       s = (s * 1664525 + 1013904223) >>> 0;
       out.push(s / 0xffffffff);
     }
     return out;
-  }, [b.pos.x, b.pos.z, stories, windowsPerFloor]);
+  }, [b.pos.x, b.pos.z, stories]);
 
   if (state.collapsed) {
-    // Rubble pile
     return (
       <group position={[b.pos.x, 0, b.pos.z]}>
-        <mesh position={[0, b.h * 0.08, 0]} castShadow>
-          <boxGeometry args={[b.w * 1.05, b.h * 0.16, b.d * 1.05]} />
-          <meshStandardMaterial color="#1f1a17" roughness={0.95} />
+        {/* Rubble pile of jagged blocks */}
+        {Array.from({ length: 6 }).map((_, i) => {
+          const a = (i / 6) * Math.PI * 2;
+          const r = (i % 3) * 1.6;
+          const sz = 1.4 + (i % 3) * 0.8;
+          return (
+            <mesh key={i} position={[Math.cos(a) * r, 0.6 + (i % 2) * 0.4, Math.sin(a) * r]} rotation={[0, a, 0.3]} castShadow>
+              <boxGeometry args={[sz * 1.2, sz, sz]} />
+              <meshStandardMaterial color="#1f1a17" roughness={0.95} />
+            </mesh>
+          );
+        })}
+        <mesh position={[0, 0.2, 0]}>
+          <boxGeometry args={[b.w * 1.05, 0.4, b.d * 1.05]} />
+          <meshStandardMaterial color="#0d0807" roughness={0.95} />
         </mesh>
-        {/* embers */}
-        <pointLight position={[0, 4, 0]} color="#ff6a2a" intensity={0.6} distance={40} />
+        <pointLight position={[0, 4, 0]} color="#ff6a2a" intensity={0.7} distance={50} />
       </group>
     );
   }
@@ -120,114 +130,166 @@ function Building3D({
   // Damage tilt + sink
   const tilt = state.damage * 0.18;
   const sink = state.damage * b.h * 0.15;
-  const buildingY = Math.max(0, b.h / 2 - sink);
   const buildingHeight = b.h * (1 - state.damage * 0.12);
 
   // Color shift for fire damage (sooty)
   const sootMix = state.damage;
-  const wallColor = new THREE.Color(base).lerp(new THREE.Color("#0d0807"), sootMix * 0.7);
+  const wallColor = new THREE.Color(palette.wall).lerp(new THREE.Color("#0d0807"), sootMix * 0.7);
+  const trimColor = new THREE.Color(palette.trim ?? palette.wall).lerp(new THREE.Color("#0d0807"), sootMix * 0.7);
   const emissiveOnFire = state.onFire
     ? new THREE.Color("#ff5a1f").multiplyScalar(0.6 + Math.sin(performance.now() * 0.01) * 0.25)
     : new THREE.Color("#000");
 
-  // Tier the building: optional smaller upper section for tall offices
-  const hasTier = b.h > 50 && (b.kind === "office" || b.kind === "campus" || b.kind === "lecture");
+  // Variant-driven shape
+  const isGlass = b.variant === "skyscraper-glass";
+  const isClassicTall = b.variant === "skyscraper-classic";
+  const isBrownstone = b.variant === "brownstone";
+  const isCivic = b.variant === "civic";
+  const isIndustrial = b.variant === "industrial";
+
+  // Tier shape: tall buildings get setbacks
+  const hasTier = (isGlass || isClassicTall) && b.h > 50;
   const lowerH = hasTier ? buildingHeight * 0.6 : buildingHeight;
   const upperH = hasTier ? buildingHeight * 0.4 : 0;
+  const podiumH = isBrownstone ? 1.2 : 0.8;
+
+  // Window strip color (slightly variable per building)
+  const winColor = new THREE.Color(palette.window);
+  const winEmissiveBase = isGlass ? 0.4 : 0.0;
 
   return (
     <group
       position={[b.pos.x, 0, b.pos.z]}
-      rotation={[tilt * 0.5, 0, tilt]}
+      rotation={[tilt * 0.5, b.rotY, tilt]}
     >
-      {/* ground footprint / podium */}
-      <mesh position={[0, 0.4, 0]} receiveShadow>
-        <boxGeometry args={[b.w * 1.08, 0.8, b.d * 1.08]} />
-        <meshStandardMaterial color="#1a2230" roughness={0.9} />
+      {/* Plaza / podium base */}
+      <mesh position={[0, podiumH / 2, 0]} receiveShadow>
+        <boxGeometry args={[b.w * 1.1, podiumH, b.d * 1.1]} />
+        <meshStandardMaterial color={trimColor} roughness={0.92} metalness={0.1} />
       </mesh>
 
-      {/* lower body */}
+      {/* LOWER body */}
       <mesh
-        position={[0, lowerH / 2 + 0.8, 0]}
+        position={[0, lowerH / 2 + podiumH - sink, 0]}
         castShadow
         receiveShadow
       >
         <boxGeometry args={[b.w, lowerH, b.d]} />
         <meshStandardMaterial
           color={wallColor}
-          roughness={0.7}
-          metalness={0.25}
+          roughness={palette.roughness}
+          metalness={palette.metalness}
           emissive={emissiveOnFire}
           emissiveIntensity={state.onFire ? 0.8 : 0}
         />
       </mesh>
 
-      {/* tiered upper */}
+      {/* For glass towers, add an inner emissive "core" through windows */}
+      {isGlass && !state.onFire && isNight && (
+        <mesh position={[0, lowerH / 2 + podiumH, 0]}>
+          <boxGeometry args={[b.w * 0.96, lowerH * 0.96, b.d * 0.96]} />
+          <meshBasicMaterial color={palette.accent} transparent opacity={0.18} />
+        </mesh>
+      )}
+
+      {/* TIERED upper section */}
       {hasTier && (
-        <mesh
-          position={[0, lowerH + upperH / 2 + 0.8, 0]}
-          castShadow
-        >
+        <mesh position={[0, lowerH + upperH / 2 + podiumH - sink, 0]} castShadow>
           <boxGeometry args={[b.w * 0.7, upperH, b.d * 0.7]} />
           <meshStandardMaterial
             color={wallColor}
-            roughness={0.6}
-            metalness={0.3}
+            roughness={palette.roughness * 0.9}
+            metalness={palette.metalness}
             emissive={emissiveOnFire}
             emissiveIntensity={state.onFire ? 0.7 : 0}
           />
         </mesh>
       )}
 
-      {/* rooftop equipment */}
-      <mesh position={[0, buildingHeight + 1 + 0.8, 0]}>
-        <boxGeometry args={[b.w * 0.4, 1.2, b.d * 0.4]} />
-        <meshStandardMaterial color="#2a3040" roughness={0.8} />
-      </mesh>
-      {hasTier && (
-        <mesh position={[b.w * 0.18, lowerH + 1.5 + 0.8, 0]}>
-          <boxGeometry args={[2, 3, 2]} />
-          <meshStandardMaterial color="#3a4050" />
+      {/* CROWN — antenna for skyscrapers */}
+      {(isGlass || isClassicTall) && b.h > 70 && (
+        <>
+          <mesh position={[0, buildingHeight + podiumH + 4, 0]}>
+            <cylinderGeometry args={[0.3, 0.6, 8, 6]} />
+            <meshStandardMaterial color="#94a3b8" metalness={0.8} roughness={0.3} />
+          </mesh>
+          <mesh position={[0, buildingHeight + podiumH + 8.5, 0]}>
+            <sphereGeometry args={[0.4, 8, 8]} />
+            <meshBasicMaterial color="#ef4444" />
+          </mesh>
+          <pointLight position={[0, buildingHeight + podiumH + 8.5, 0]} color="#ef4444" intensity={1.5} distance={40} />
+        </>
+      )}
+
+      {/* Rooftop equipment box */}
+      {!isBrownstone && (
+        <mesh position={[0, buildingHeight + podiumH + 0.6, 0]}>
+          <boxGeometry args={[b.w * 0.4, 1.2, b.d * 0.4]} />
+          <meshStandardMaterial color={trimColor} roughness={0.85} />
+        </mesh>
+      )}
+      {/* AC units / vents */}
+      {isIndustrial || isCivic ? null : (
+        <>
+          <mesh position={[b.w * 0.25, buildingHeight + podiumH + 1, b.d * 0.25]}>
+            <boxGeometry args={[2, 1.4, 2]} />
+            <meshStandardMaterial color="#475569" />
+          </mesh>
+          <mesh position={[-b.w * 0.25, buildingHeight + podiumH + 1, -b.d * 0.25]}>
+            <boxGeometry args={[1.5, 1, 1.5]} />
+            <meshStandardMaterial color="#64748b" />
+          </mesh>
+        </>
+      )}
+
+      {/* Brownstone pitched roof */}
+      {isBrownstone && (
+        <mesh position={[0, buildingHeight + podiumH + 1, 0]} rotation={[0, Math.PI / 4, 0]}>
+          <coneGeometry args={[Math.max(b.w, b.d) * 0.7, 3, 4]} />
+          <meshStandardMaterial color="#3a2418" roughness={0.95} />
         </mesh>
       )}
 
-      {/* WINDOW STRIPS (front + back) using emissive plane */}
-      {!state.collapsed &&
-        Array.from({ length: stories }).map((_, floor) => {
-          const y = 1.6 + floor * (lowerH / stories);
-          if (y > lowerH + 0.5) return null;
-          const litFront = (litMatrix[floor * 4] ?? 0) < lightProb ? 0.9 : 0.05;
-          const litBack = (litMatrix[floor * 4 + 1] ?? 0) < lightProb ? 0.9 : 0.05;
-          const litLeft = (litMatrix[floor * 4 + 2] ?? 0) < lightProb ? 0.9 : 0.05;
-          const litRight = (litMatrix[floor * 4 + 3] ?? 0) < lightProb ? 0.9 : 0.05;
-          const winColor = new THREE.Color(glow);
-          // dim windows when sooty
-          const dim = 1 - sootMix * 0.85;
-          return (
-            <group key={floor}>
-              {/* front */}
-              <mesh position={[0, y, b.d / 2 + 0.05]}>
-                <planeGeometry args={[b.w * 0.85, 1.4]} />
-                <meshBasicMaterial color={winColor} transparent opacity={litFront * dim} />
-              </mesh>
-              {/* back */}
-              <mesh position={[0, y, -b.d / 2 - 0.05]} rotation={[0, Math.PI, 0]}>
-                <planeGeometry args={[b.w * 0.85, 1.4]} />
-                <meshBasicMaterial color={winColor} transparent opacity={litBack * dim} />
-              </mesh>
-              {/* left */}
-              <mesh position={[-b.w / 2 - 0.05, y, 0]} rotation={[0, -Math.PI / 2, 0]}>
-                <planeGeometry args={[b.d * 0.85, 1.4]} />
-                <meshBasicMaterial color={winColor} transparent opacity={litLeft * dim} />
-              </mesh>
-              {/* right */}
-              <mesh position={[b.w / 2 + 0.05, y, 0]} rotation={[0, Math.PI / 2, 0]}>
-                <planeGeometry args={[b.d * 0.85, 1.4]} />
-                <meshBasicMaterial color={winColor} transparent opacity={litRight * dim} />
-              </mesh>
-            </group>
-          );
-        })}
+      {/* WINDOW STRIPS */}
+      {Array.from({ length: stories }).map((_, floor) => {
+        const floorH = lowerH / stories;
+        const y = podiumH + 1.2 + floor * floorH;
+        if (y > lowerH + podiumH + 0.5) return null;
+        const litFront = (litMatrix[floor * 4] ?? 0) < lightProb ? 0.95 : 0.06;
+        const litBack = (litMatrix[floor * 4 + 1] ?? 0) < lightProb ? 0.95 : 0.06;
+        const litLeft = (litMatrix[floor * 4 + 2] ?? 0) < lightProb ? 0.95 : 0.06;
+        const litRight = (litMatrix[floor * 4 + 3] ?? 0) < lightProb ? 0.95 : 0.06;
+        const dim = 1 - sootMix * 0.85;
+        const stripH = isGlass ? floorH * 0.85 : 1.4;
+        return (
+          <group key={floor}>
+            <mesh position={[0, y, b.d / 2 + 0.05]}>
+              <planeGeometry args={[b.w * 0.85, stripH]} />
+              <meshBasicMaterial color={winColor} transparent opacity={(litFront + winEmissiveBase) * dim} />
+            </mesh>
+            <mesh position={[0, y, -b.d / 2 - 0.05]} rotation={[0, Math.PI, 0]}>
+              <planeGeometry args={[b.w * 0.85, stripH]} />
+              <meshBasicMaterial color={winColor} transparent opacity={(litBack + winEmissiveBase) * dim} />
+            </mesh>
+            <mesh position={[-b.w / 2 - 0.05, y, 0]} rotation={[0, -Math.PI / 2, 0]}>
+              <planeGeometry args={[b.d * 0.85, stripH]} />
+              <meshBasicMaterial color={winColor} transparent opacity={(litLeft + winEmissiveBase) * dim} />
+            </mesh>
+            <mesh position={[b.w / 2 + 0.05, y, 0]} rotation={[0, Math.PI / 2, 0]}>
+              <planeGeometry args={[b.d * 0.85, stripH]} />
+              <meshBasicMaterial color={winColor} transparent opacity={(litRight + winEmissiveBase) * dim} />
+            </mesh>
+          </group>
+        );
+      })}
+
+      {/* Mullions for glass towers — vertical lines */}
+      {isGlass && [-1, 1].map((s) => (
+        <mesh key={s} position={[0, lowerH / 2 + podiumH, (b.d / 2 + 0.06) * s]}>
+          <planeGeometry args={[b.w * 0.85, lowerH * 0.95]} />
+          <meshBasicMaterial color="#0f1626" transparent opacity={0.35} />
+        </mesh>
+      ))}
 
       {/* fire glow at ignition point */}
       {state.onFire && !state.collapsed && (
@@ -243,20 +305,16 @@ function Building3D({
       {/* Fire-station signage: red roof beacon + bay doors */}
       {b.kind === "firestation" && !state.collapsed && (
         <>
-          {/* Bright red roof */}
-          <mesh position={[0, buildingHeight + 0.8 + 0.4, 0]}>
+          <mesh position={[0, buildingHeight + podiumH + 0.4, 0]}>
             <boxGeometry args={[b.w * 1.02, 0.8, b.d * 1.02]} />
             <meshStandardMaterial color="#dc2626" emissive="#7f1d1d" emissiveIntensity={0.4} />
           </mesh>
-          {/* Rotating beacon */}
-          <FireStationBeacon height={buildingHeight + 2.2} />
-          {/* Bay doors (yellow stripes) */}
+          <FireStationBeacon height={buildingHeight + podiumH + 2.2} />
           <mesh position={[0, 3, b.d / 2 + 0.06]}>
             <planeGeometry args={[b.w * 0.7, 5]} />
             <meshBasicMaterial color="#fbbf24" />
           </mesh>
-          {/* "FIRE" letter glow strip */}
-          <mesh position={[0, buildingHeight - 1.5 + 0.8, b.d / 2 + 0.07]}>
+          <mesh position={[0, buildingHeight + podiumH - 1.5, b.d / 2 + 0.07]}>
             <planeGeometry args={[b.w * 0.6, 1.2]} />
             <meshBasicMaterial color="#fef08a" />
           </mesh>

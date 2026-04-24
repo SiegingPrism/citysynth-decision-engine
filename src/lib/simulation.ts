@@ -126,7 +126,7 @@ export function buildCity(seed = 7): CityModel {
   // Campus quarter (top-right): a 3x3 block area
   const campusBounds = { x: 60, z: -240, w: 240, d: 240 };
 
-  // City buildings
+  // City buildings — pick variant based on position (downtown core gets skyscrapers)
   for (let x = -half + blockSize / 2; x < half; x += blockSize) {
     for (let z = -half + blockSize / 2; z < half; z += blockSize) {
       const inCampus =
@@ -136,10 +136,28 @@ export function buildCity(seed = 7): CityModel {
         z < campusBounds.z + campusBounds.d;
       if (inCampus) continue;
 
+      const distToCenter = Math.sqrt(x * x + z * z);
+      const downtown = distToCenter < 220;
+      const midtown = distToCenter < 380;
+
+      let h: number;
+      let kind: Building["kind"];
+      let variant: BuildingVariant;
+      if (downtown) {
+        h = 60 + r() * 110; // tall
+        kind = r() > 0.3 ? "office" : "residential";
+        variant = r() > 0.5 ? "skyscraper-glass" : "skyscraper-classic";
+      } else if (midtown) {
+        h = 24 + r() * 60;
+        kind = r() > 0.5 ? "office" : "residential";
+        variant = r() > 0.4 ? "midrise-office" : "tower-residential";
+      } else {
+        h = 10 + r() * 28;
+        kind = r() > 0.6 ? "office" : "residential";
+        variant = r() > 0.5 ? "brownstone" : "midrise-office";
+      }
       const w = 18 + r() * 22;
       const d = 18 + r() * 22;
-      const h = 12 + r() * 80;
-      const kind: Building["kind"] = r() > 0.6 ? "residential" : "office";
       buildings.push({
         id: `b-${x}-${z}`,
         pos: { x: x + (r() - 0.5) * 6, z: z + (r() - 0.5) * 6 },
@@ -147,6 +165,8 @@ export function buildCity(seed = 7): CityModel {
         d,
         h,
         kind,
+        variant,
+        rotY: Math.floor(r() * 4) * (Math.PI / 2),
         capacity: Math.round(h * 4),
       });
     }
@@ -154,23 +174,23 @@ export function buildCity(seed = 7): CityModel {
 
   // Campus buildings — recognizable layout
   const campus: Array<Omit<Building, "id">> = [
-    { pos: { x: 100, z: -200 }, w: 50, d: 30, h: 22, kind: "lecture", capacity: 800, label: "Lecture Hall A" },
-    { pos: { x: 170, z: -200 }, w: 50, d: 30, h: 22, kind: "lecture", capacity: 800, label: "Lecture Hall B" },
-    { pos: { x: 240, z: -200 }, w: 40, d: 30, h: 30, kind: "library", capacity: 600, label: "Library" },
-    { pos: { x: 100, z: -130 }, w: 70, d: 35, h: 14, kind: "cafeteria", capacity: 500, label: "Cafeteria" },
-    { pos: { x: 200, z: -130 }, w: 60, d: 40, h: 18, kind: "campus", capacity: 1200, label: "Student Union" },
-    { pos: { x: 100, z: -60 }, w: 45, d: 45, h: 26, kind: "campus", capacity: 700, label: "Engineering" },
-    { pos: { x: 175, z: -60 }, w: 45, d: 45, h: 26, kind: "campus", capacity: 700, label: "Sciences" },
-    { pos: { x: 250, z: -60 }, w: 45, d: 30, h: 8, kind: "parking", capacity: 400, label: "Parking" },
+    { pos: { x: 100, z: -200 }, w: 50, d: 30, h: 22, kind: "lecture", variant: "campus-modern", rotY: 0, capacity: 800, label: "Lecture Hall A" },
+    { pos: { x: 170, z: -200 }, w: 50, d: 30, h: 22, kind: "lecture", variant: "campus-modern", rotY: 0, capacity: 800, label: "Lecture Hall B" },
+    { pos: { x: 240, z: -200 }, w: 40, d: 30, h: 30, kind: "library", variant: "campus-brick", rotY: 0, capacity: 600, label: "Library" },
+    { pos: { x: 100, z: -130 }, w: 70, d: 35, h: 14, kind: "cafeteria", variant: "campus-modern", rotY: 0, capacity: 500, label: "Cafeteria" },
+    { pos: { x: 200, z: -130 }, w: 60, d: 40, h: 18, kind: "campus", variant: "campus-brick", rotY: 0, capacity: 1200, label: "Student Union" },
+    { pos: { x: 100, z: -60 }, w: 45, d: 45, h: 26, kind: "campus", variant: "campus-modern", rotY: 0, capacity: 700, label: "Engineering" },
+    { pos: { x: 175, z: -60 }, w: 45, d: 45, h: 26, kind: "campus", variant: "campus-modern", rotY: 0, capacity: 700, label: "Sciences" },
+    { pos: { x: 250, z: -60 }, w: 45, d: 30, h: 8, kind: "parking", variant: "industrial", rotY: 0, capacity: 400, label: "Parking" },
   ];
   campus.forEach((b, i) => buildings.push({ id: `c-${i}`, ...b }));
 
   // Fire stations spread across the larger map
   const fireStations: Array<Omit<Building, "id">> = [
-    { pos: { x: -360, z: -300 }, w: 38, d: 28, h: 12, kind: "firestation", capacity: 40, label: "Fire Station 1" },
-    { pos: { x: 360, z: 240 }, w: 38, d: 28, h: 12, kind: "firestation", capacity: 40, label: "Fire Station 2" },
-    { pos: { x: -300, z: 360 }, w: 38, d: 28, h: 12, kind: "firestation", capacity: 40, label: "Fire Station 3" },
-    { pos: { x: 240, z: -360 }, w: 38, d: 28, h: 12, kind: "firestation", capacity: 40, label: "Fire Station 4" },
+    { pos: { x: -360, z: -300 }, w: 38, d: 28, h: 12, kind: "firestation", variant: "civic", rotY: 0, capacity: 40, label: "Fire Station 1" },
+    { pos: { x: 360, z: 240 }, w: 38, d: 28, h: 12, kind: "firestation", variant: "civic", rotY: 0, capacity: 40, label: "Fire Station 2" },
+    { pos: { x: -300, z: 360 }, w: 38, d: 28, h: 12, kind: "firestation", variant: "civic", rotY: 0, capacity: 40, label: "Fire Station 3" },
+    { pos: { x: 240, z: -360 }, w: 38, d: 28, h: 12, kind: "firestation", variant: "civic", rotY: 0, capacity: 40, label: "Fire Station 4" },
   ];
   // Remove any pre-existing block buildings overlapping the fire station footprints
   fireStations.forEach((fs, i) => {

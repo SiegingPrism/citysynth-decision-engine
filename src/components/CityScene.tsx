@@ -2493,28 +2493,46 @@ export function CityScene(props: Props) {
   if (snapshot.crisis === "fire") sky = "#1a0a08";
   else if (snapshot.crisis === "flood") sky = "#0a1424";
 
+  // Fog tint matches the horizon for a seamless blend with the sky dome.
+  let fogColor = isNight ? "#0b1a36" : "#9bb6d4";
+  if (snapshot.crisis === "fire") fogColor = "#a83a18";
+  else if (snapshot.crisis === "flood") fogColor = "#3a4a66";
+
   return (
     <Canvas
       shadows
-      dpr={[1, 1.75]}
-      camera={{ position: [620, 520, 620], fov: 45, near: 1, far: 5000 }}
-      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
+      dpr={[1, 1.5]}
+      camera={{ position: [620, 520, 620], fov: 45, near: 1, far: 6500 }}
+      gl={{
+        antialias: true,
+        toneMapping: THREE.ACESFilmicToneMapping,
+        toneMappingExposure: 1.05,
+        powerPreference: "high-performance",
+      }}
     >
-      <color attach="background" args={[sky]} />
-      <fog attach="fog" args={[sky, 900, 2400]} />
+      <fog attach="fog" args={[fogColor, 1200, 3200]} />
 
-      {/* Stars at night */}
-      {isNight && <Stars radius={1200} depth={400} count={1800} factor={6} fade speed={0.5} />}
+      {/* Procedural gradient sky + sun/moon */}
+      <SkyDome hour={snapshot.hour} crisis={snapshot.crisis} />
 
-      <ambientLight intensity={isNight ? 0.22 : 0.5} />
-      <hemisphereLight args={["#5a7090", "#0a0e1a", isNight ? 0.25 : 0.45]} />
+      {/* Stars at night — sit inside the sky dome */}
+      {isNight && <Stars radius={2400} depth={600} count={1400} factor={6} fade speed={0.4} />}
+
+      <ambientLight intensity={isNight ? 0.28 : 0.55} />
+      <hemisphereLight args={["#7090b0", "#0a0e1a", isNight ? 0.3 : 0.55]} />
       <directionalLight
         position={[480, 780, 320]}
         intensity={isNight ? 0.35 : 0.95}
         color={snapshot.crisis === "fire" ? "#ffb18a" : isNight ? "#94a3b8" : "#ffffff"}
         castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
+        shadow-mapSize-width={1024}
+        shadow-mapSize-height={1024}
+        shadow-camera-near={100}
+        shadow-camera-far={2000}
+        shadow-camera-left={-700}
+        shadow-camera-right={700}
+        shadow-camera-top={700}
+        shadow-camera-bottom={-700}
       />
 
       <Ground size={city.size} />

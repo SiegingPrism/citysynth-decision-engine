@@ -465,30 +465,105 @@ const TREE_VARIANTS = ["oak", "pine", "palm"] as const;
 type TreeVariant = (typeof TREE_VARIANTS)[number];
 
 function Trees({ city }: { city: CityModel }) {
-  const trees = useMemo(() => {
-    const out: { x: number; z: number; s: number; v: TreeVariant; rot: number }[] = [];
+  // Generate tree positions split by variant — each rendered as a single InstancedMesh
+  // for trunk + canopy. This is ~1000x faster than individual <mesh> per tree.
+  const buckets = useMemo(() => {
+    const oak: Array<{ x: number; z: number; s: number; rot: number }> = [];
+    const pine: Array<{ x: number; z: number; s: number; rot: number }> = [];
+    const palm: Array<{ x: number; z: number; s: number; rot: number }> = [];
     let s = 19;
     const rnd = () => {
       s = (s * 1664525 + 1013904223) >>> 0;
       return s / 0xffffffff;
     };
-    const treeCount = Math.floor((city.size * city.size) / 1100);
+    // Cap tree count so it scales sub-linearly with map size
+    const treeCount = Math.min(900, Math.floor((city.size * city.size) / 2200));
     for (let i = 0; i < treeCount; i++) {
       const x = (rnd() - 0.5) * city.size;
       const z = (rnd() - 0.5) * city.size;
       const nx = Math.round(x / 60) * 60 + (rnd() > 0.5 ? 7 : -7);
       const nz = Math.round(z / 60) * 60 + (rnd() > 0.5 ? 7 : -7);
-      const v = TREE_VARIANTS[Math.floor(rnd() * TREE_VARIANTS.length)];
-      out.push({ x: nx, z: nz, s: 0.7 + rnd() * 0.6, v, rot: rnd() * Math.PI });
+      const item = { x: nx, z: nz, s: 0.7 + rnd() * 0.6, rot: rnd() * Math.PI };
+      const which = rnd();
+      if (which < 0.55) oak.push(item);
+      else if (which < 0.85) pine.push(item);
+      else palm.push(item);
     }
-    return out;
+    return { oak, pine, palm };
   }, [city.size]);
 
   return (
     <group>
-      {trees.map((t, i) => (
-        <TreeMesh key={i} x={t.x} z={t.z} scale={t.s} variant={t.v} rot={t.rot} />
-      ))}
+      <TreeInstances items={buckets.oak} variant="oak" />
+      <TreeInstances items={buckets.pine} variant="pine" />
+      <TreeInstances items={buckets.palm} variant="palm" />
+    </group>
+  );
+}
+
+function TreeInstances({
+  items,
+  variant,
+}: {
+  items: Array<{ x: number; z: number; s: number; rot: number }>;
+  variant: TreeVariant;
+}) {
+  const trunkRef = useRef<THREE.InstancedMesh>(null);
+  const canopyRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  useEffect(() => {
+    if (!trunkRef.current || !canopyRef.current) return;
+    items.forEach((t, i) => {
+      // trunk
+      dummy.position.set(t.x, 1.2 * t.s, t.z);
+      dummy.rotation.set(0, t.rot, 0);
+      dummy.scale.set(t.s, t.s, t.s);
+      dummy.updateMatrix();
+      trunkRef.current!.setMatrixAt(i, dummy.matrix);
+      // canopy (sits on top of trunk)
+      const canopyY = variant === "palm" ? 4.4 * t.s : 3.4 * t.s;
+      dummy.position.set(t.x, canopyY, t.z);
+      dummy.rotation.set(0, t.rot, 0);
+      dummy.scale.set(t.s, t.s, t.s);
+      dummy.updateMatrix();
+      canopyRef.current!.setMatrixAt(i, dummy.matrix);
+    });
+    trunkRef.current.instanceMatrix.needsUpdate = true;
+    canopyRef.current.instanceMatrix.needsUpdate = true;
+  }, [items, dummy, variant]);
+
+  if (items.length === 0) return null;
+  const n = items.length;
+
+  // Geometry per variant
+  let trunkGeom: React.ReactElement;
+  let canopyGeom: React.ReactElement;
+  let canopyColor: string;
+  if (variant === "pine") {
+    trunkGeom = <cylinderGeometry args={[0.22, 0.32, 2.4, 6]} />;
+    canopyGeom = <coneGeometry args={[1.4, 3.4, 8]} />;
+    canopyColor = "#1a5a30";
+  } else if (variant === "palm") {
+    trunkGeom = <cylinderGeometry args={[0.18, 0.3, 4.4, 6]} />;
+    canopyGeom = <icosahedronGeometry args={[1.2, 0]} />;
+    canopyColor = "#2f7a3a";
+  } else {
+    trunkGeom = <cylinderGeometry args={[0.28, 0.4, 2.6, 6]} />;
+    canopyGeom = <icosahedronGeometry args={[1.9, 1]} />;
+    canopyColor = "#1f6e3a";
+  }
+
+  return (
+    <group>
+      <instancedMesh ref={trunkRef} args={[undefined, undefined, n]}>
+        {trunkGeom}
+        <meshStandardMaterial color="#3a2418" roughness={0.95} />
+      </instancedMesh>
+      <instancedMesh ref={canopyRef} args={[undefined, undefined, n]}>
+        {canopyGeom}
+        <meshStandardMaterial color={canopyColor} roughness={0.92} />
+      </instancedMesh>
     </group>
   );
 }

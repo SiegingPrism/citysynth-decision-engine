@@ -130,19 +130,19 @@ export function IntroOverlay({ onEnter }: Props) {
             animate={{ y: 0, opacity: 1 }}
             transition={{ delay: 0.15, duration: 0.7 }}
           >
-            <div className="flex items-center justify-center gap-2 text-[11px] font-mono uppercase tracking-[0.4em] text-primary text-glow-cyan">
+            <div className="flex items-center justify-center gap-2 text-[11px] font-mono uppercase tracking-[0.4em] text-primary text-glow-gold">
               <span className="w-2 h-2 rounded-full bg-primary animate-blink" />
-              Aether OS · v2.4.1 · build 2049
+              CitySynth OS · v3.0.1 · build 2049
             </div>
 
             <motion.h1
-              className="font-display text-7xl md:text-8xl font-bold leading-none"
+              className="font-display text-7xl md:text-8xl font-bold leading-none tracking-tight"
               initial={{ letterSpacing: "0.5em", opacity: 0 }}
-              animate={{ letterSpacing: "0.05em", opacity: 1 }}
+              animate={{ letterSpacing: "-0.02em", opacity: 1 }}
               transition={{ duration: 1.1, delay: 0.25 }}
             >
-              <span className="text-primary text-glow-cyan">A</span>
-              <span className="text-foreground">ETHER</span>
+              <span className="gradient-text-gold">City</span>
+              <span className="text-foreground">Synth</span>
             </motion.h1>
 
             <motion.div

@@ -167,7 +167,7 @@ function TwinPage() {
     [city, controls, crisis, tMinutes],
   );
 
-  // Auto-fly to crisis epicenter when one becomes active
+  // Auto-play cinematic crisis flythrough when one becomes active
   useEffect(() => {
     if (crisis === "none") return;
     const epi =
@@ -176,7 +176,7 @@ function TwinPage() {
       snapshot.surge?.pos ??
       null;
     if (!epi) return;
-    setFlyTo({ x: epi.x, z: epi.z, preset: "tactical", nonce: Date.now() });
+    setFlythrough({ kind: "crisis", nonce: Date.now(), focus: { x: epi.x, z: epi.z } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crisis]);
 

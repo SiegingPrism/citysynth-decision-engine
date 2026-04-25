@@ -69,6 +69,8 @@ function TwinPage() {
     nonce: number;
   } | null>(null);
   const [liveData, setLiveData] = useState(false);
+  const [flythrough, setFlythrough] = useState<{ kind: FlythroughKind; nonce: number; focus?: { x: number; z: number } } | null>(null);
+  const [quality, setQuality] = useState<"high" | "medium" | "low">("high");
   const { sample: liveSample, deltas: liveDeltas } = useLiveData(liveData);
 
   // When live data is on, gently steer simulation inputs toward the feed

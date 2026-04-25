@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Html, Stars } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette, BrightnessContrast } from "@react-three/postprocessing";
 import * as THREE from "three";
 import type { Building, BuildingVariant, CityModel, SimSnapshot, Vec2 } from "@/lib/simulation";
+
+export type FlythroughKind = "arrival" | "overview" | "crisis" | null;
 
 type Props = {
   city: CityModel;
@@ -16,6 +18,10 @@ type Props = {
   crisisPlaySeconds: number;
   /** target the camera should fly to. Re-fires when reference changes. */
   flyTo: { x: number; z: number; preset?: "overview" | "tactical" | "street" } | null;
+  /** Cinematic flythrough sequence. Re-fires when nonce changes. */
+  flythrough?: { kind: FlythroughKind; nonce: number; focus?: Vec2 } | null;
+  /** Reports the runtime quality tier the adaptive scaler picked. */
+  onQualityChange?: (tier: "high" | "medium" | "low") => void;
 };
 
 /* ------------------------- realistic buildings ------------------------- */

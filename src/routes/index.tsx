@@ -250,6 +250,8 @@ function TwinPage() {
           setHoveredRoadId={setHoveredRoadId}
           crisisPlaySeconds={crisisPlaySeconds}
           flyTo={flyTo}
+          flythrough={flythrough}
+          onQualityChange={setQuality}
         />
       </div>
 

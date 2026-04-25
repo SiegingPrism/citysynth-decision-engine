@@ -237,7 +237,14 @@ function TwinPage() {
 
   return (
     <main className="h-screen w-screen overflow-hidden text-foreground relative">
-      {intro && <IntroOverlay onEnter={() => setIntro(false)} />}
+      {intro && (
+        <IntroOverlay
+          onEnter={() => {
+            setIntro(false);
+            setTimeout(() => setFlythrough({ kind: "arrival", nonce: Date.now() }), 150);
+          }}
+        />
+      )}
 
       {/* 3D scene fills the screen */}
       <div className="absolute inset-0 grid-bg">

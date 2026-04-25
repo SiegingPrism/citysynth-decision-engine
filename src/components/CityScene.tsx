@@ -2357,6 +2357,121 @@ function EscortVehicle({
   );
 }
 
+/* ===================================== SKY DOME ===================================== */
+
+/**
+ * Procedural sky dome — vertical gradient (zenith → horizon) on a back-faced
+ * sphere, plus a sun or moon disc. Cheaper than @react-three/sky and more
+ * controllable for our crisis tinting.
+ */
+function SkyDome({
+  hour,
+  crisis,
+}: {
+  hour: number;
+  crisis: SimSnapshot["crisis"];
+}) {
+  const isNight = hour < 6.5 || hour > 19;
+  const isDawnDusk = (hour >= 5.5 && hour < 7.5) || (hour >= 18 && hour < 20);
+
+  // Pick gradient stops based on time + crisis
+  const { top, bottom, sun } = useMemo(() => {
+    let top = "#1b3a72";
+    let bottom = "#9bb6d4";
+    let sun = "#ffe9b3";
+    if (isNight) {
+      top = "#030616";
+      bottom = "#0b1a36";
+      sun = "#dde6f5"; // moon
+    } else if (isDawnDusk) {
+      top = "#2a2858";
+      bottom = "#ffb27a";
+      sun = "#ffd28a";
+    }
+    if (crisis === "fire") {
+      top = isNight ? "#1a0606" : "#3a1208";
+      bottom = "#a83a18";
+      sun = "#ff8a4a";
+    } else if (crisis === "flood") {
+      top = isNight ? "#04070f" : "#162236";
+      bottom = "#3a4a66";
+      sun = "#aac4d6";
+    }
+    return { top, bottom, sun };
+  }, [isNight, isDawnDusk, crisis]);
+
+  // Gradient shader: lerp top→bottom by world Y on the dome.
+  const skyMat = useMemo(() => {
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      uniforms: {
+        topColor: { value: new THREE.Color(top) },
+        bottomColor: { value: new THREE.Color(bottom) },
+        offset: { value: 0.0 },
+        exponent: { value: 0.7 },
+      },
+      vertexShader: `
+        varying vec3 vWorldPos;
+        void main() {
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorldPos = wp.xyz;
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 topColor;
+        uniform vec3 bottomColor;
+        uniform float offset;
+        uniform float exponent;
+        varying vec3 vWorldPos;
+        void main() {
+          float h = normalize(vWorldPos + vec3(0.0, offset, 0.0)).y;
+          float t = pow(max(h, 0.0), exponent);
+          gl_FragColor = vec4(mix(bottomColor, topColor, t), 1.0);
+        }
+      `,
+    });
+    return mat;
+  }, []);
+
+  // Update colors live without rebuilding the material
+  useEffect(() => {
+    (skyMat.uniforms.topColor.value as THREE.Color).set(top);
+    (skyMat.uniforms.bottomColor.value as THREE.Color).set(bottom);
+  }, [top, bottom, skyMat]);
+
+  // Sun/moon position — slow arc across the sky based on hour
+  const sunPos = useMemo<[number, number, number]>(() => {
+    const t = ((hour - 6) / 12) * Math.PI; // 0 at sunrise, π at sunset
+    const r = 2200;
+    const x = Math.cos(t) * r;
+    const y = Math.max(60, Math.sin(t) * r * 0.6);
+    const z = -r * 0.3;
+    return [x, y, z];
+  }, [hour]);
+
+  return (
+    <group>
+      {/* gradient dome — large enough to sit beyond the fog far plane */}
+      <mesh frustumCulled={false}>
+        <sphereGeometry args={[3000, 24, 16]} />
+        <primitive object={skyMat} attach="material" />
+      </mesh>
+      {/* sun / moon disc */}
+      <mesh position={sunPos}>
+        <sphereGeometry args={[isNight ? 70 : 90, 16, 12]} />
+        <meshBasicMaterial color={sun} toneMapped={false} />
+      </mesh>
+      {/* soft halo */}
+      <mesh position={sunPos}>
+        <sphereGeometry args={[isNight ? 140 : 220, 16, 12]} />
+        <meshBasicMaterial color={sun} transparent opacity={0.15} toneMapped={false} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
 /* ===================================== SCENE ===================================== */
 
 export function CityScene(props: Props) {

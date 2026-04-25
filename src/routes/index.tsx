@@ -340,6 +340,37 @@ function TwinPage() {
           </div>
         </div>
 
+        {/* Cinematic flythroughs */}
+        <div className="hud-panel rounded-lg p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-primary text-glow-cyan">
+              Cinematic flythrough
+            </div>
+            <div className="flex items-center gap-1 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+              <Gauge className="w-2.5 h-2.5" />
+              <span
+                className={
+                  quality === "high"
+                    ? "text-[var(--emerald)]"
+                    : quality === "medium"
+                    ? "text-[var(--amber)]"
+                    : "text-destructive"
+                }
+              >
+                {quality}
+              </span>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <CamBtn icon={<Plane className="w-3 h-3" />} label="Arrival" hint="" onClick={() => playFlythrough("arrival")} />
+            <CamBtn icon={<Orbit className="w-3 h-3" />} label="Orbit" hint="" onClick={() => playFlythrough("overview")} />
+            <CamBtn icon={<Flame className="w-3 h-3" />} label="Crisis" hint="" onClick={() => playFlythrough("crisis")} />
+          </div>
+          <div className="text-[9px] font-mono text-muted-foreground/70 leading-tight pt-1">
+            Press a flythrough — drag the view at any time to take back control.
+          </div>
+        </div>
+
         <EventLog
           city={city}
           snapshot={snapshot}

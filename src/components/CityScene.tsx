@@ -850,7 +850,7 @@ function Vehicles({ city, snapshot }: { city: CityModel; snapshot: SimSnapshot }
 
   return (
     <group>
-      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]} castShadow>
+      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]}>
         <boxGeometry args={[3.6, 1.0, 1.7]} />
         <meshStandardMaterial metalness={0.65} roughness={0.32} />
       </instancedMesh>

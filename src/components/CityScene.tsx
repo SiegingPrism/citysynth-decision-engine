@@ -2752,11 +2752,11 @@ export function CityScene(props: Props) {
 
   return (
     <Canvas
-      shadows
-      dpr={[1, 1.5]}
+      shadows={quality !== "low"}
+      dpr={quality === "high" ? [1, 1.5] : quality === "medium" ? [1, 1] : [0.75, 1]}
       camera={{ position: [620, 520, 620], fov: 45, near: 1, far: 6500 }}
       gl={{
-        antialias: true,
+        antialias: quality !== "low",
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 1.05,
         powerPreference: "high-performance",
@@ -2768,7 +2768,16 @@ export function CityScene(props: Props) {
       <SkyDome hour={snapshot.hour} crisis={snapshot.crisis} />
 
       {/* Stars at night — sit inside the sky dome */}
-      {isNight && <Stars radius={2400} depth={600} count={1400} factor={6} fade speed={0.4} />}
+      {isNight && quality !== "low" && (
+        <Stars
+          radius={2400}
+          depth={600}
+          count={quality === "high" ? 1400 : 700}
+          factor={6}
+          fade
+          speed={0.4}
+        />
+      )}
 
       <ambientLight intensity={isNight ? 0.28 : 0.55} />
       <hemisphereLight args={["#7090b0", "#0a0e1a", isNight ? 0.3 : 0.55]} />
@@ -2776,9 +2785,9 @@ export function CityScene(props: Props) {
         position={[480, 780, 320]}
         intensity={isNight ? 0.35 : 0.95}
         color={snapshot.crisis === "fire" ? "#ffb18a" : isNight ? "#94a3b8" : "#ffffff"}
-        castShadow
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
+        castShadow={quality === "high"}
+        shadow-mapSize-width={quality === "high" ? 1024 : 512}
+        shadow-mapSize-height={quality === "high" ? 1024 : 512}
         shadow-camera-near={100}
         shadow-camera-far={2000}
         shadow-camera-left={-700}
@@ -2798,11 +2807,11 @@ export function CityScene(props: Props) {
         hoveredRoadId={hoveredRoadId}
         setHoveredRoadId={setHoveredRoadId}
       />
-      <Trees city={city} />
+      {quality !== "low" && <Trees city={city} />}
       <Streetlights city={city} hour={snapshot.hour} />
       <BuildingsLayer city={city} snapshot={snapshot} playSec={crisisPlaySeconds} />
       <Vehicles city={city} snapshot={snapshot} />
-      <Pedestrians city={city} snapshot={snapshot} />
+      {quality === "high" && <Pedestrians city={city} snapshot={snapshot} />}
       <TrafficLights city={city} signalTiming={signalTiming} />
 
       {/* Crisis layers */}
@@ -2815,6 +2824,12 @@ export function CityScene(props: Props) {
             playSec={crisisPlaySeconds}
           />
           <EmberSparks fire={snapshot.fire} />
+          {quality !== "low" && (
+            <VolumetricSmoke
+              center={snapshot.fire.pos}
+              radius={snapshot.fire.radius}
+            />
+          )}
           <FireTrucks
             fire={snapshot.fire}
             stations={city.buildings.filter((b) => b.kind === "firestation")}
@@ -2830,6 +2845,8 @@ export function CityScene(props: Props) {
             buildings={city.buildings}
             playSec={crisisPlaySeconds}
           />
+          {/* Orange ember-flash sky pulses during fire */}
+          <LightningFlash active color="#ff9466" intervalRange={[5, 11]} />
         </>
       )}
       {snapshot.flood && (
@@ -2839,6 +2856,8 @@ export function CityScene(props: Props) {
           <FloodRipples center={snapshot.flood.pos} radius={snapshot.flood.radius} />
           <FloodDebris flood={snapshot.flood} />
           <RescueBoats flood={snapshot.flood} />
+          {/* Storm lightning during the flood */}
+          <LightningFlash active color="#cfe2ff" intervalRange={[3, 7]} />
         </>
       )}
       {snapshot.surge && (
@@ -2849,7 +2868,13 @@ export function CityScene(props: Props) {
       )}
 
       <CrisisCameraFX snapshot={snapshot} />
-      <CameraRig flyTo={flyTo} citySize={city.size} />
+      <CameraRig flyTo={flyTo} flythrough={flythrough ?? null} citySize={city.size} />
+      <AdaptiveQuality
+        onChange={(t) => {
+          setQuality(t);
+          onQualityChange?.(t);
+        }}
+      />
 
       <OrbitControls
         enableDamping
@@ -2860,16 +2885,22 @@ export function CityScene(props: Props) {
         target={[0, 0, 0]}
       />
 
-      {/* Cinematic post-processing */}
-      <EffectComposer multisampling={0}>
+      {/* Cinematic post-processing — single composer, capped passes for perf */}
+      <EffectComposer multisampling={0} enabled={quality !== "low"}>
         <Bloom
-          intensity={snapshot.crisis === "fire" ? 1.1 : 0.6}
-          luminanceThreshold={0.6}
-          luminanceSmoothing={0.2}
+          intensity={
+            snapshot.crisis === "fire"
+              ? 1.6
+              : isNight
+              ? 1.15
+              : 0.7
+          }
+          luminanceThreshold={isNight ? 0.35 : 0.55}
+          luminanceSmoothing={0.22}
           mipmapBlur
         />
-        <BrightnessContrast brightness={0.0} contrast={0.08} />
-        <Vignette eskil={false} offset={0.2} darkness={0.85} />
+        <BrightnessContrast brightness={0.0} contrast={0.1} />
+        <Vignette eskil={false} offset={0.2} darkness={0.88} />
       </EffectComposer>
     </Canvas>
   );

@@ -2488,10 +2488,7 @@ export function CityScene(props: Props) {
   const isNight = snapshot.hour < 6.5 || snapshot.hour > 19;
   const signalTiming = 1;
 
-  // Sky color shifts with crisis
-  let sky = isNight ? "#06080f" : "#0e1525";
-  if (snapshot.crisis === "fire") sky = "#1a0a08";
-  else if (snapshot.crisis === "flood") sky = "#0a1424";
+  // (sky/fog colors are computed below per-frame)
 
   // Fog tint matches the horizon for a seamless blend with the sky dome.
   let fogColor = isNight ? "#0b1a36" : "#9bb6d4";

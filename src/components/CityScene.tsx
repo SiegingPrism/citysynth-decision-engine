@@ -2736,7 +2736,10 @@ export function CityScene(props: Props) {
     setHoveredRoadId,
     crisisPlaySeconds,
     flyTo,
+    flythrough,
+    onQualityChange,
   } = props;
+  const [quality, setQuality] = useState<"high" | "medium" | "low">("high");
   const isNight = snapshot.hour < 6.5 || snapshot.hour > 19;
   const signalTiming = 1;
 

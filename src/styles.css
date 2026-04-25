@@ -81,13 +81,20 @@
   --gold: oklch(0.84 0.16 78);
   --mint: oklch(0.82 0.16 165);
 
-  --gradient-hud: linear-gradient(135deg, oklch(0.20 0.035 265) 0%, oklch(0.14 0.025 265) 100%);
+  --gradient-hud: linear-gradient(135deg, color-mix(in oklab, var(--background) 35%, transparent) 0%, color-mix(in oklab, var(--background) 55%, transparent) 100%);
   --gradient-gold: linear-gradient(135deg, oklch(0.84 0.16 78) 0%, oklch(0.72 0.18 50) 100%);
   --gradient-mint: linear-gradient(135deg, oklch(0.82 0.16 165) 0%, oklch(0.68 0.14 200) 100%);
   --gradient-glow: radial-gradient(ellipse at top, color-mix(in oklab, var(--primary) 22%, transparent) 0%, transparent 70%);
   --shadow-hud: 0 0 0 1px color-mix(in oklab, var(--primary) 22%, transparent), 0 14px 48px -10px color-mix(in oklab, var(--primary) 28%, transparent);
-  --shadow-panel: 0 10px 40px -16px oklch(0 0 0 / 0.7), inset 0 1px 0 0 color-mix(in oklab, var(--foreground) 4%, transparent);
+  --shadow-panel:
+    0 1px 0 0 color-mix(in oklab, var(--foreground) 9%, transparent) inset,
+    0 -1px 0 0 color-mix(in oklab, oklch(0 0 0) 30%, transparent) inset,
+    0 18px 50px -18px oklch(0 0 0 / 0.65),
+    0 4px 18px -8px color-mix(in oklab, var(--primary) 18%, transparent);
   --grid-line: color-mix(in oklab, var(--primary) 7%, transparent);
+  --glass-tint: color-mix(in oklab, var(--background) 38%, transparent);
+  --glass-border: color-mix(in oklab, var(--foreground) 14%, transparent);
+  --glass-highlight: color-mix(in oklab, var(--foreground) 22%, transparent);
 }
 
 .dark {

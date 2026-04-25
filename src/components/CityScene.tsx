@@ -948,7 +948,7 @@ function Pedestrians({ city, snapshot }: { city: CityModel; snapshot: SimSnapsho
   const n = Math.max(1, data.length);
   return (
     <group>
-      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]} castShadow>
+      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]}>
         <capsuleGeometry args={[0.3, 0.9, 4, 6]} />
         <meshStandardMaterial roughness={0.6} />
       </instancedMesh>

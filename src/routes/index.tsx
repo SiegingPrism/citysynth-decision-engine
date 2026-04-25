@@ -214,6 +214,16 @@ function TwinPage() {
     }
   };
 
+  const playFlythrough = (kind: NonNullable<FlythroughKind>) => {
+    const focus =
+      snapshot.fire?.pos ??
+      snapshot.flood?.pos ??
+      snapshot.surge?.pos ??
+      snapshot.hotspots[0]?.pos ??
+      { x: 0, z: 0 };
+    setFlythrough({ kind, nonce: Date.now(), focus });
+  };
+
   const hour = Math.floor(snapshot.hour);
   const minutes = Math.floor((snapshot.hour - hour) * 60);
   const timeLabel = `${hour.toString().padStart(2, "0")}:${minutes

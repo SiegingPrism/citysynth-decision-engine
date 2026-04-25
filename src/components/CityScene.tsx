@@ -465,30 +465,105 @@ const TREE_VARIANTS = ["oak", "pine", "palm"] as const;
 type TreeVariant = (typeof TREE_VARIANTS)[number];
 
 function Trees({ city }: { city: CityModel }) {
-  const trees = useMemo(() => {
-    const out: { x: number; z: number; s: number; v: TreeVariant; rot: number }[] = [];
+  // Generate tree positions split by variant — each rendered as a single InstancedMesh
+  // for trunk + canopy. This is ~1000x faster than individual <mesh> per tree.
+  const buckets = useMemo(() => {
+    const oak: Array<{ x: number; z: number; s: number; rot: number }> = [];
+    const pine: Array<{ x: number; z: number; s: number; rot: number }> = [];
+    const palm: Array<{ x: number; z: number; s: number; rot: number }> = [];
     let s = 19;
     const rnd = () => {
       s = (s * 1664525 + 1013904223) >>> 0;
       return s / 0xffffffff;
     };
-    const treeCount = Math.floor((city.size * city.size) / 1100);
+    // Cap tree count so it scales sub-linearly with map size
+    const treeCount = Math.min(900, Math.floor((city.size * city.size) / 2200));
     for (let i = 0; i < treeCount; i++) {
       const x = (rnd() - 0.5) * city.size;
       const z = (rnd() - 0.5) * city.size;
       const nx = Math.round(x / 60) * 60 + (rnd() > 0.5 ? 7 : -7);
       const nz = Math.round(z / 60) * 60 + (rnd() > 0.5 ? 7 : -7);
-      const v = TREE_VARIANTS[Math.floor(rnd() * TREE_VARIANTS.length)];
-      out.push({ x: nx, z: nz, s: 0.7 + rnd() * 0.6, v, rot: rnd() * Math.PI });
+      const item = { x: nx, z: nz, s: 0.7 + rnd() * 0.6, rot: rnd() * Math.PI };
+      const which = rnd();
+      if (which < 0.55) oak.push(item);
+      else if (which < 0.85) pine.push(item);
+      else palm.push(item);
     }
-    return out;
+    return { oak, pine, palm };
   }, [city.size]);
 
   return (
     <group>
-      {trees.map((t, i) => (
-        <TreeMesh key={i} x={t.x} z={t.z} scale={t.s} variant={t.v} rot={t.rot} />
-      ))}
+      <TreeInstances items={buckets.oak} variant="oak" />
+      <TreeInstances items={buckets.pine} variant="pine" />
+      <TreeInstances items={buckets.palm} variant="palm" />
+    </group>
+  );
+}
+
+function TreeInstances({
+  items,
+  variant,
+}: {
+  items: Array<{ x: number; z: number; s: number; rot: number }>;
+  variant: TreeVariant;
+}) {
+  const trunkRef = useRef<THREE.InstancedMesh>(null);
+  const canopyRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  useEffect(() => {
+    if (!trunkRef.current || !canopyRef.current) return;
+    items.forEach((t, i) => {
+      // trunk
+      dummy.position.set(t.x, 1.2 * t.s, t.z);
+      dummy.rotation.set(0, t.rot, 0);
+      dummy.scale.set(t.s, t.s, t.s);
+      dummy.updateMatrix();
+      trunkRef.current!.setMatrixAt(i, dummy.matrix);
+      // canopy (sits on top of trunk)
+      const canopyY = variant === "palm" ? 4.4 * t.s : 3.4 * t.s;
+      dummy.position.set(t.x, canopyY, t.z);
+      dummy.rotation.set(0, t.rot, 0);
+      dummy.scale.set(t.s, t.s, t.s);
+      dummy.updateMatrix();
+      canopyRef.current!.setMatrixAt(i, dummy.matrix);
+    });
+    trunkRef.current.instanceMatrix.needsUpdate = true;
+    canopyRef.current.instanceMatrix.needsUpdate = true;
+  }, [items, dummy, variant]);
+
+  if (items.length === 0) return null;
+  const n = items.length;
+
+  // Geometry per variant
+  let trunkGeom: React.ReactElement;
+  let canopyGeom: React.ReactElement;
+  let canopyColor: string;
+  if (variant === "pine") {
+    trunkGeom = <cylinderGeometry args={[0.22, 0.32, 2.4, 6]} />;
+    canopyGeom = <coneGeometry args={[1.4, 3.4, 8]} />;
+    canopyColor = "#1a5a30";
+  } else if (variant === "palm") {
+    trunkGeom = <cylinderGeometry args={[0.18, 0.3, 4.4, 6]} />;
+    canopyGeom = <icosahedronGeometry args={[1.2, 0]} />;
+    canopyColor = "#2f7a3a";
+  } else {
+    trunkGeom = <cylinderGeometry args={[0.28, 0.4, 2.6, 6]} />;
+    canopyGeom = <icosahedronGeometry args={[1.9, 1]} />;
+    canopyColor = "#1f6e3a";
+  }
+
+  return (
+    <group>
+      <instancedMesh ref={trunkRef} args={[undefined, undefined, n]}>
+        {trunkGeom}
+        <meshStandardMaterial color="#3a2418" roughness={0.95} />
+      </instancedMesh>
+      <instancedMesh ref={canopyRef} args={[undefined, undefined, n]}>
+        {canopyGeom}
+        <meshStandardMaterial color={canopyColor} roughness={0.92} />
+      </instancedMesh>
     </group>
   );
 }
@@ -564,7 +639,7 @@ function Streetlights({ city, hour }: { city: CityModel; hour: number }) {
     const half = city.size / 2;
     for (let x = -half + 30; x < half; x += 60) {
       for (let z = -half + 30; z < half; z += 60) {
-        if (rnd() > 0.55) continue;
+        if (rnd() > 0.45) continue;
         const ox = (rnd() > 0.5 ? 1 : -1) * 5;
         const oz = (rnd() > 0.5 ? 1 : -1) * 5;
         out.push({ x: x + ox, z: z + oz });
@@ -573,25 +648,54 @@ function Streetlights({ city, hour }: { city: CityModel; hour: number }) {
     return out;
   }, [city.size]);
 
+  // Three instanced meshes: pole, arm, lamp head. NO per-instance pointLights —
+  // night lighting is handled by the lamp's emissive material + bloom, plus the
+  // global hemisphere/dir lights. This is the single biggest perf win.
+  const poleRef = useRef<THREE.InstancedMesh>(null);
+  const armRef = useRef<THREE.InstancedMesh>(null);
+  const lampRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  useEffect(() => {
+    if (!poleRef.current || !armRef.current || !lampRef.current) return;
+    positions.forEach((p, i) => {
+      // pole
+      dummy.position.set(p.x, 3, p.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      poleRef.current!.setMatrixAt(i, dummy.matrix);
+      // arm
+      dummy.position.set(p.x + 0.6, 5.8, p.z);
+      dummy.updateMatrix();
+      armRef.current!.setMatrixAt(i, dummy.matrix);
+      // lamp head
+      dummy.position.set(p.x + 1.1, 5.6, p.z);
+      dummy.updateMatrix();
+      lampRef.current!.setMatrixAt(i, dummy.matrix);
+    });
+    poleRef.current.instanceMatrix.needsUpdate = true;
+    armRef.current.instanceMatrix.needsUpdate = true;
+    lampRef.current.instanceMatrix.needsUpdate = true;
+  }, [positions, dummy]);
+
+  if (positions.length === 0) return null;
+  const n = positions.length;
+
   return (
     <group>
-      {positions.map((p, i) => (
-        <group key={i} position={[p.x, 0, p.z]}>
-          <mesh position={[0, 3, 0]}>
-            <cylinderGeometry args={[0.12, 0.18, 6, 6]} />
-            <meshStandardMaterial color="#1f2937" metalness={0.6} roughness={0.5} />
-          </mesh>
-          <mesh position={[0.6, 5.8, 0]}>
-            <boxGeometry args={[1.2, 0.18, 0.3]} />
-            <meshStandardMaterial color="#1f2937" />
-          </mesh>
-          <mesh position={[1.1, 5.6, 0]}>
-            <sphereGeometry args={[0.32, 8, 8]} />
-            <meshBasicMaterial color={isNight ? "#fde68a" : "#374151"} />
-          </mesh>
-          {isNight && <pointLight position={[1.1, 5.6, 0]} color="#fde68a" intensity={0.45} distance={18} decay={2} />}
-        </group>
-      ))}
+      <instancedMesh ref={poleRef} args={[undefined, undefined, n]}>
+        <cylinderGeometry args={[0.12, 0.18, 6, 6]} />
+        <meshStandardMaterial color="#1f2937" metalness={0.6} roughness={0.5} />
+      </instancedMesh>
+      <instancedMesh ref={armRef} args={[undefined, undefined, n]}>
+        <boxGeometry args={[1.2, 0.18, 0.3]} />
+        <meshStandardMaterial color="#1f2937" />
+      </instancedMesh>
+      <instancedMesh ref={lampRef} args={[undefined, undefined, n]}>
+        <sphereGeometry args={[0.32, 8, 8]} />
+        <meshBasicMaterial color={isNight ? "#fde68a" : "#374151"} />
+      </instancedMesh>
     </group>
   );
 }
@@ -746,7 +850,7 @@ function Vehicles({ city, snapshot }: { city: CityModel; snapshot: SimSnapshot }
 
   return (
     <group>
-      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]} castShadow>
+      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]}>
         <boxGeometry args={[3.6, 1.0, 1.7]} />
         <meshStandardMaterial metalness={0.65} roughness={0.32} />
       </instancedMesh>
@@ -844,7 +948,7 @@ function Pedestrians({ city, snapshot }: { city: CityModel; snapshot: SimSnapsho
   const n = Math.max(1, data.length);
   return (
     <group>
-      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]} castShadow>
+      <instancedMesh ref={bodyRef} args={[undefined, undefined, n]}>
         <capsuleGeometry args={[0.3, 0.9, 4, 6]} />
         <meshStandardMaterial roughness={0.6} />
       </instancedMesh>
@@ -2253,6 +2357,121 @@ function EscortVehicle({
   );
 }
 
+/* ===================================== SKY DOME ===================================== */
+
+/**
+ * Procedural sky dome — vertical gradient (zenith → horizon) on a back-faced
+ * sphere, plus a sun or moon disc. Cheaper than @react-three/sky and more
+ * controllable for our crisis tinting.
+ */
+function SkyDome({
+  hour,
+  crisis,
+}: {
+  hour: number;
+  crisis: SimSnapshot["crisis"];
+}) {
+  const isNight = hour < 6.5 || hour > 19;
+  const isDawnDusk = (hour >= 5.5 && hour < 7.5) || (hour >= 18 && hour < 20);
+
+  // Pick gradient stops based on time + crisis
+  const { top, bottom, sun } = useMemo(() => {
+    let top = "#1b3a72";
+    let bottom = "#9bb6d4";
+    let sun = "#ffe9b3";
+    if (isNight) {
+      top = "#030616";
+      bottom = "#0b1a36";
+      sun = "#dde6f5"; // moon
+    } else if (isDawnDusk) {
+      top = "#2a2858";
+      bottom = "#ffb27a";
+      sun = "#ffd28a";
+    }
+    if (crisis === "fire") {
+      top = isNight ? "#1a0606" : "#3a1208";
+      bottom = "#a83a18";
+      sun = "#ff8a4a";
+    } else if (crisis === "flood") {
+      top = isNight ? "#04070f" : "#162236";
+      bottom = "#3a4a66";
+      sun = "#aac4d6";
+    }
+    return { top, bottom, sun };
+  }, [isNight, isDawnDusk, crisis]);
+
+  // Gradient shader: lerp top→bottom by world Y on the dome.
+  const skyMat = useMemo(() => {
+    const mat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      uniforms: {
+        topColor: { value: new THREE.Color(top) },
+        bottomColor: { value: new THREE.Color(bottom) },
+        offset: { value: 0.0 },
+        exponent: { value: 0.7 },
+      },
+      vertexShader: `
+        varying vec3 vWorldPos;
+        void main() {
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorldPos = wp.xyz;
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 topColor;
+        uniform vec3 bottomColor;
+        uniform float offset;
+        uniform float exponent;
+        varying vec3 vWorldPos;
+        void main() {
+          float h = normalize(vWorldPos + vec3(0.0, offset, 0.0)).y;
+          float t = pow(max(h, 0.0), exponent);
+          gl_FragColor = vec4(mix(bottomColor, topColor, t), 1.0);
+        }
+      `,
+    });
+    return mat;
+  }, []);
+
+  // Update colors live without rebuilding the material
+  useEffect(() => {
+    (skyMat.uniforms.topColor.value as THREE.Color).set(top);
+    (skyMat.uniforms.bottomColor.value as THREE.Color).set(bottom);
+  }, [top, bottom, skyMat]);
+
+  // Sun/moon position — slow arc across the sky based on hour
+  const sunPos = useMemo<[number, number, number]>(() => {
+    const t = ((hour - 6) / 12) * Math.PI; // 0 at sunrise, π at sunset
+    const r = 2200;
+    const x = Math.cos(t) * r;
+    const y = Math.max(60, Math.sin(t) * r * 0.6);
+    const z = -r * 0.3;
+    return [x, y, z];
+  }, [hour]);
+
+  return (
+    <group>
+      {/* gradient dome — large enough to sit beyond the fog far plane */}
+      <mesh frustumCulled={false}>
+        <sphereGeometry args={[3000, 24, 16]} />
+        <primitive object={skyMat} attach="material" />
+      </mesh>
+      {/* sun / moon disc */}
+      <mesh position={sunPos}>
+        <sphereGeometry args={[isNight ? 70 : 90, 16, 12]} />
+        <meshBasicMaterial color={sun} toneMapped={false} />
+      </mesh>
+      {/* soft halo */}
+      <mesh position={sunPos}>
+        <sphereGeometry args={[isNight ? 140 : 220, 16, 12]} />
+        <meshBasicMaterial color={sun} transparent opacity={0.15} toneMapped={false} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
 /* ===================================== SCENE ===================================== */
 
 export function CityScene(props: Props) {
@@ -2269,33 +2488,48 @@ export function CityScene(props: Props) {
   const isNight = snapshot.hour < 6.5 || snapshot.hour > 19;
   const signalTiming = 1;
 
-  // Sky color shifts with crisis
-  let sky = isNight ? "#06080f" : "#0e1525";
-  if (snapshot.crisis === "fire") sky = "#1a0a08";
-  else if (snapshot.crisis === "flood") sky = "#0a1424";
+  // (sky/fog colors are computed below per-frame)
+
+  // Fog tint matches the horizon for a seamless blend with the sky dome.
+  let fogColor = isNight ? "#0b1a36" : "#9bb6d4";
+  if (snapshot.crisis === "fire") fogColor = "#a83a18";
+  else if (snapshot.crisis === "flood") fogColor = "#3a4a66";
 
   return (
     <Canvas
       shadows
-      dpr={[1, 1.75]}
-      camera={{ position: [620, 520, 620], fov: 45, near: 1, far: 5000 }}
-      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.05 }}
+      dpr={[1, 1.5]}
+      camera={{ position: [620, 520, 620], fov: 45, near: 1, far: 6500 }}
+      gl={{
+        antialias: true,
+        toneMapping: THREE.ACESFilmicToneMapping,
+        toneMappingExposure: 1.05,
+        powerPreference: "high-performance",
+      }}
     >
-      <color attach="background" args={[sky]} />
-      <fog attach="fog" args={[sky, 900, 2400]} />
+      <fog attach="fog" args={[fogColor, 1200, 3200]} />
 
-      {/* Stars at night */}
-      {isNight && <Stars radius={1200} depth={400} count={1800} factor={6} fade speed={0.5} />}
+      {/* Procedural gradient sky + sun/moon */}
+      <SkyDome hour={snapshot.hour} crisis={snapshot.crisis} />
 
-      <ambientLight intensity={isNight ? 0.22 : 0.5} />
-      <hemisphereLight args={["#5a7090", "#0a0e1a", isNight ? 0.25 : 0.45]} />
+      {/* Stars at night — sit inside the sky dome */}
+      {isNight && <Stars radius={2400} depth={600} count={1400} factor={6} fade speed={0.4} />}
+
+      <ambientLight intensity={isNight ? 0.28 : 0.55} />
+      <hemisphereLight args={["#7090b0", "#0a0e1a", isNight ? 0.3 : 0.55]} />
       <directionalLight
         position={[480, 780, 320]}
         intensity={isNight ? 0.35 : 0.95}
         color={snapshot.crisis === "fire" ? "#ffb18a" : isNight ? "#94a3b8" : "#ffffff"}
         castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
+        shadow-mapSize-width={1024}
+        shadow-mapSize-height={1024}
+        shadow-camera-near={100}
+        shadow-camera-far={2000}
+        shadow-camera-left={-700}
+        shadow-camera-right={700}
+        shadow-camera-top={700}
+        shadow-camera-bottom={-700}
       />
 
       <Ground size={city.size} />

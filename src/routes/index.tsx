@@ -22,7 +22,8 @@ import {
   type SimControls,
 } from "@/lib/simulation";
 import { Slider } from "@/components/ui/slider";
-import { Activity, MapPin, Wind, Users, Clock, Cpu, Eye, Crosshair, Footprints } from "lucide-react";
+import { Activity, MapPin, Wind, Users, Clock, Cpu, Eye, Crosshair, Footprints, Plane, Orbit, Flame, Gauge } from "lucide-react";
+import type { FlythroughKind } from "@/components/CityScene";
 
 export const Route = createFileRoute("/")({
   head: () => ({

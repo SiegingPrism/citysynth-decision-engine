@@ -27,13 +27,13 @@ import { Activity, MapPin, Wind, Users, Clock, Cpu, Eye, Crosshair, Footprints }
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Aether — Digital Twin Control Room" },
+      { title: "CitySynth — Predictive Digital Twin" },
       {
         name: "description",
         content:
           "A live decision-engine digital twin of a city + campus: simulate, time-travel, and run AI-driven optimizations.",
       },
-      { property: "og:title", content: "Aether — Digital Twin Control Room" },
+      { property: "og:title", content: "CitySynth — Predictive Digital Twin" },
       {
         property: "og:description",
         content:
@@ -256,7 +256,7 @@ function TwinPage() {
             <div className="w-2 h-2 rounded-full bg-primary animate-blink" />
             <div>
               <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-primary text-glow-cyan">
-                Aether · Digital Twin
+                CitySynth · Predictive Twin
               </div>
               <div className="text-xs text-muted-foreground">
                 Meridian District + Northcrest Campus

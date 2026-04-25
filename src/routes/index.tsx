@@ -22,7 +22,8 @@ import {
   type SimControls,
 } from "@/lib/simulation";
 import { Slider } from "@/components/ui/slider";
-import { Activity, MapPin, Wind, Users, Clock, Cpu, Eye, Crosshair, Footprints } from "lucide-react";
+import { Activity, MapPin, Wind, Users, Clock, Cpu, Eye, Crosshair, Footprints, Plane, Orbit, Flame, Gauge } from "lucide-react";
+import type { FlythroughKind } from "@/components/CityScene";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -68,6 +69,8 @@ function TwinPage() {
     nonce: number;
   } | null>(null);
   const [liveData, setLiveData] = useState(false);
+  const [flythrough, setFlythrough] = useState<{ kind: FlythroughKind; nonce: number; focus?: { x: number; z: number } } | null>(null);
+  const [quality, setQuality] = useState<"high" | "medium" | "low">("high");
   const { sample: liveSample, deltas: liveDeltas } = useLiveData(liveData);
 
   // When live data is on, gently steer simulation inputs toward the feed
@@ -164,7 +167,7 @@ function TwinPage() {
     [city, controls, crisis, tMinutes],
   );
 
-  // Auto-fly to crisis epicenter when one becomes active
+  // Auto-play cinematic crisis flythrough when one becomes active
   useEffect(() => {
     if (crisis === "none") return;
     const epi =
@@ -173,7 +176,7 @@ function TwinPage() {
       snapshot.surge?.pos ??
       null;
     if (!epi) return;
-    setFlyTo({ x: epi.x, z: epi.z, preset: "tactical", nonce: Date.now() });
+    setFlythrough({ kind: "crisis", nonce: Date.now(), focus: { x: epi.x, z: epi.z } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crisis]);
 
@@ -211,6 +214,16 @@ function TwinPage() {
     }
   };
 
+  const playFlythrough = (kind: NonNullable<FlythroughKind>) => {
+    const focus =
+      snapshot.fire?.pos ??
+      snapshot.flood?.pos ??
+      snapshot.surge?.pos ??
+      snapshot.hotspots[0]?.pos ??
+      { x: 0, z: 0 };
+    setFlythrough({ kind, nonce: Date.now(), focus });
+  };
+
   const hour = Math.floor(snapshot.hour);
   const minutes = Math.floor((snapshot.hour - hour) * 60);
   const timeLabel = `${hour.toString().padStart(2, "0")}:${minutes
@@ -224,7 +237,14 @@ function TwinPage() {
 
   return (
     <main className="h-screen w-screen overflow-hidden text-foreground relative">
-      {intro && <IntroOverlay onEnter={() => setIntro(false)} />}
+      {intro && (
+        <IntroOverlay
+          onEnter={() => {
+            setIntro(false);
+            setTimeout(() => setFlythrough({ kind: "arrival", nonce: Date.now() }), 150);
+          }}
+        />
+      )}
 
       {/* 3D scene fills the screen */}
       <div className="absolute inset-0 grid-bg">
@@ -237,6 +257,8 @@ function TwinPage() {
           setHoveredRoadId={setHoveredRoadId}
           crisisPlaySeconds={crisisPlaySeconds}
           flyTo={flyTo}
+          flythrough={flythrough}
+          onQualityChange={setQuality}
         />
       </div>
 
@@ -322,6 +344,37 @@ function TwinPage() {
             <CamBtn icon={<Eye className="w-3 h-3" />} label="Overview" hint="O" onClick={() => flyToPreset("overview")} />
             <CamBtn icon={<Crosshair className="w-3 h-3" />} label="Tactical" hint="T" onClick={() => flyToPreset("tactical")} />
             <CamBtn icon={<Footprints className="w-3 h-3" />} label="Street" hint="" onClick={() => flyToPreset("street")} />
+          </div>
+        </div>
+
+        {/* Cinematic flythroughs */}
+        <div className="hud-panel rounded-lg p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-primary text-glow-cyan">
+              Cinematic flythrough
+            </div>
+            <div className="flex items-center gap-1 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">
+              <Gauge className="w-2.5 h-2.5" />
+              <span
+                className={
+                  quality === "high"
+                    ? "text-[var(--emerald)]"
+                    : quality === "medium"
+                    ? "text-[var(--amber)]"
+                    : "text-destructive"
+                }
+              >
+                {quality}
+              </span>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <CamBtn icon={<Plane className="w-3 h-3" />} label="Arrival" hint="" onClick={() => playFlythrough("arrival")} />
+            <CamBtn icon={<Orbit className="w-3 h-3" />} label="Orbit" hint="" onClick={() => playFlythrough("overview")} />
+            <CamBtn icon={<Flame className="w-3 h-3" />} label="Crisis" hint="" onClick={() => playFlythrough("crisis")} />
+          </div>
+          <div className="text-[9px] font-mono text-muted-foreground/70 leading-tight pt-1">
+            Press a flythrough — drag the view at any time to take back control.
           </div>
         </div>
 

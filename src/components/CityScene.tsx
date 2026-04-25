@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Html, Stars } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette, BrightnessContrast } from "@react-three/postprocessing";
 import * as THREE from "three";
 import type { Building, BuildingVariant, CityModel, SimSnapshot, Vec2 } from "@/lib/simulation";
+
+export type FlythroughKind = "arrival" | "overview" | "crisis" | null;
 
 type Props = {
   city: CityModel;
@@ -16,6 +18,10 @@ type Props = {
   crisisPlaySeconds: number;
   /** target the camera should fly to. Re-fires when reference changes. */
   flyTo: { x: number; z: number; preset?: "overview" | "tactical" | "street" } | null;
+  /** Cinematic flythrough sequence. Re-fires when nonce changes. */
+  flythrough?: { kind: FlythroughKind; nonce: number; focus?: Vec2 } | null;
+  /** Reports the runtime quality tier the adaptive scaler picked. */
+  onQualityChange?: (tier: "high" | "medium" | "low") => void;
 };
 
 /* ------------------------- realistic buildings ------------------------- */
@@ -2139,21 +2145,81 @@ function Helicopter({ target }: { target: Vec2 }) {
   );
 }
 
-/* ------------------------- CAMERA RIG (smooth fly-to) ------------------------- */
+/* ------------------------- CAMERA RIG (smooth fly-to + cinematic flythroughs) ------------------------- */
+
+type Keyframe = { pos: THREE.Vector3; look: THREE.Vector3; duration: number };
+
+// Smooth easeInOutCubic
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+function buildFlythroughKeyframes(
+  kind: NonNullable<FlythroughKind>,
+  citySize: number,
+  focus: Vec2,
+): Keyframe[] {
+  const c = citySize;
+  if (kind === "arrival") {
+    // High wide arc, swooping down toward city center
+    return [
+      { pos: new THREE.Vector3(c * 1.3, c * 1.1, c * 1.3), look: new THREE.Vector3(0, 0, 0), duration: 0 },
+      { pos: new THREE.Vector3(c * 0.9, c * 0.7, c * 0.4), look: new THREE.Vector3(0, 30, 0), duration: 4 },
+      { pos: new THREE.Vector3(c * 0.4, c * 0.35, -c * 0.2), look: new THREE.Vector3(0, 20, 0), duration: 4.5 },
+      { pos: new THREE.Vector3(0, c * 0.55, c * 0.6), look: new THREE.Vector3(0, 0, 0), duration: 4 },
+    ];
+  }
+  if (kind === "overview") {
+    // Slow orbit around the center
+    const r = c * 0.85;
+    const h = c * 0.65;
+    const ring: Keyframe[] = [];
+    const steps = 6;
+    for (let i = 0; i <= steps; i++) {
+      const a = (i / steps) * Math.PI * 2;
+      ring.push({
+        pos: new THREE.Vector3(Math.cos(a) * r, h, Math.sin(a) * r),
+        look: new THREE.Vector3(0, 20, 0),
+        duration: i === 0 ? 0 : 3.2,
+      });
+    }
+    return ring;
+  }
+  // crisis close-up: dive from sky down to street level circling the focus
+  const fx = focus.x;
+  const fz = focus.z;
+  return [
+    { pos: new THREE.Vector3(fx + 220, 280, fz + 220), look: new THREE.Vector3(fx, 0, fz), duration: 0 },
+    { pos: new THREE.Vector3(fx + 140, 160, fz + 140), look: new THREE.Vector3(fx, 10, fz), duration: 3.0 },
+    { pos: new THREE.Vector3(fx - 90, 70, fz + 110), look: new THREE.Vector3(fx, 5, fz), duration: 3.5 },
+    { pos: new THREE.Vector3(fx - 50, 28, fz - 60), look: new THREE.Vector3(fx, 4, fz), duration: 3.0 },
+    { pos: new THREE.Vector3(fx + 80, 45, fz - 90), look: new THREE.Vector3(fx, 6, fz), duration: 3.2 },
+  ];
+}
 
 function CameraRig({
   flyTo,
+  flythrough,
   citySize,
 }: {
   flyTo: Props["flyTo"];
+  flythrough: Props["flythrough"];
   citySize: number;
 }) {
   const { camera } = useThree();
   const targetRef = useRef<THREE.Vector3 | null>(null);
   const cameraTargetRef = useRef<THREE.Vector3 | null>(null);
 
+  // Cinematic keyframe playback
+  const flyKeyframesRef = useRef<Keyframe[] | null>(null);
+  const flyStartTimeRef = useRef<number>(0);
+  const flyIndexRef = useRef<number>(0);
+  const flyLookRef = useRef<THREE.Vector3>(new THREE.Vector3());
+
   useEffect(() => {
     if (!flyTo) return;
+    // Cancel any in-flight cinematic on direct fly-to
+    flyKeyframesRef.current = null;
     const preset = flyTo.preset ?? "tactical";
     const lookAt = new THREE.Vector3(flyTo.x, 0, flyTo.z);
     let cam: THREE.Vector3;
@@ -2163,18 +2229,58 @@ function CameraRig({
     } else if (preset === "street") {
       cam = new THREE.Vector3(flyTo.x + 50, 35, flyTo.z + 50);
     } else {
-      // tactical
       cam = new THREE.Vector3(flyTo.x + 180, 220, flyTo.z + 180);
     }
     targetRef.current = lookAt;
     cameraTargetRef.current = cam;
   }, [flyTo, citySize]);
 
+  useEffect(() => {
+    if (!flythrough || !flythrough.kind) return;
+    const focus = flythrough.focus ?? { x: 0, z: 0 };
+    flyKeyframesRef.current = buildFlythroughKeyframes(flythrough.kind, citySize, focus);
+    flyStartTimeRef.current = performance.now() / 1000;
+    flyIndexRef.current = 0;
+    // Cancel direct flyTo so they don't fight
+    cameraTargetRef.current = null;
+    targetRef.current = null;
+  }, [flythrough, citySize]);
+
   useFrame(() => {
+    // Cinematic playback wins
+    const kf = flyKeyframesRef.current;
+    if (kf && kf.length > 1) {
+      const now = performance.now() / 1000;
+      const elapsed = now - flyStartTimeRef.current;
+      // Find current segment
+      let acc = 0;
+      let segIdx = 0;
+      for (let i = 1; i < kf.length; i++) {
+        if (elapsed < acc + kf[i].duration) {
+          segIdx = i;
+          break;
+        }
+        acc += kf[i].duration;
+        segIdx = i;
+      }
+      const seg = kf[segIdx];
+      const prev = kf[segIdx - 1] ?? kf[0];
+      const localT = Math.max(0, Math.min(1, (elapsed - acc) / Math.max(0.001, seg.duration)));
+      const eased = easeInOutCubic(localT);
+      camera.position.lerpVectors(prev.pos, seg.pos, eased);
+      flyLookRef.current.lerpVectors(prev.look, seg.look, eased);
+      camera.lookAt(flyLookRef.current);
+
+      // End of sequence
+      const totalDur = kf.reduce((s, k) => s + k.duration, 0);
+      if (elapsed > totalDur) {
+        flyKeyframesRef.current = null;
+      }
+      return;
+    }
+
     if (!cameraTargetRef.current || !targetRef.current) return;
     camera.position.lerp(cameraTargetRef.current, 0.04);
-    // we intentionally don't tween OrbitControls.target to avoid fighting the user.
-    // Instead, we look at the target while close.
     const dist = camera.position.distanceTo(cameraTargetRef.current);
     if (dist < 4) {
       cameraTargetRef.current = null;
@@ -2184,6 +2290,152 @@ function CameraRig({
 
   return null;
 }
+
+/* ------------------------- ADAPTIVE QUALITY (FPS scaler) ------------------------- */
+
+function AdaptiveQuality({
+  onChange,
+}: {
+  onChange?: (tier: "high" | "medium" | "low") => void;
+}) {
+  const { gl } = useThree();
+  const samplesRef = useRef<number[]>([]);
+  const tierRef = useRef<"high" | "medium" | "low">("high");
+  const lastChangeRef = useRef<number>(0);
+
+  useFrame((_, dt) => {
+    const fps = 1 / Math.max(0.001, dt);
+    const buf = samplesRef.current;
+    buf.push(fps);
+    if (buf.length > 60) buf.shift();
+    if (buf.length < 30) return;
+    const now = performance.now();
+    if (now - lastChangeRef.current < 2500) return;
+    const avg = buf.reduce((s, x) => s + x, 0) / buf.length;
+
+    let next: "high" | "medium" | "low" = tierRef.current;
+    if (avg < 28 && tierRef.current !== "low") next = "low";
+    else if (avg < 45 && tierRef.current === "high") next = "medium";
+    else if (avg > 55 && tierRef.current === "low") next = "medium";
+    else if (avg > 58 && tierRef.current === "medium") next = "high";
+
+    if (next !== tierRef.current) {
+      tierRef.current = next;
+      lastChangeRef.current = now;
+      // Apply DPR change
+      const dpr = next === "high" ? Math.min(window.devicePixelRatio, 1.5) : next === "medium" ? 1 : 0.75;
+      gl.setPixelRatio(dpr);
+      onChange?.(next);
+    }
+  });
+  return null;
+}
+
+/* ------------------------- VOLUMETRIC SMOKE ------------------------- */
+
+function VolumetricSmoke({ center, radius }: { center: Vec2; radius: number }) {
+  const COUNT = 38;
+  const refs = useRef<THREE.Mesh[]>([]);
+  const seeds = useMemo(() => {
+    return Array.from({ length: COUNT }, (_, i) => ({
+      a: Math.random() * Math.PI * 2,
+      r: Math.random() * radius * 0.85,
+      ySpeed: 4 + Math.random() * 6,
+      scale: 8 + Math.random() * 14,
+      phase: Math.random() * Math.PI * 2,
+      yMax: 60 + Math.random() * 40,
+    }));
+  }, [radius]);
+
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    refs.current.forEach((m, i) => {
+      if (!m) return;
+      const s = seeds[i];
+      const y = ((t * s.ySpeed + s.phase * 5) % s.yMax);
+      m.position.y = 6 + y;
+      const drift = Math.sin(t * 0.3 + s.phase) * (radius * 0.15);
+      m.position.x = center.x + Math.cos(s.a) * s.r + drift;
+      m.position.z = center.z + Math.sin(s.a) * s.r;
+      const lifeT = y / s.yMax; // 0..1
+      const scale = s.scale * (1 + lifeT * 1.6);
+      m.scale.setScalar(scale);
+      const mat = m.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.55 * (1 - lifeT) * (lifeT < 0.1 ? lifeT / 0.1 : 1);
+    });
+  });
+
+  return (
+    <group>
+      {seeds.map((_, i) => (
+        <mesh
+          key={i}
+          ref={(el) => {
+            if (el) refs.current[i] = el;
+          }}
+        >
+          <sphereGeometry args={[1, 8, 6]} />
+          <meshBasicMaterial color="#1a0e08" transparent opacity={0.5} depthWrite={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/* ------------------------- LIGHTNING FLASHES ------------------------- */
+
+function LightningFlash({
+  active,
+  color = "#cfe2ff",
+  intervalRange = [3, 7],
+}: {
+  active: boolean;
+  color?: string;
+  intervalRange?: [number, number];
+}) {
+  const lightRef = useRef<THREE.DirectionalLight>(null);
+  const sheetRef = useRef<THREE.Mesh>(null);
+  const nextStrikeRef = useRef<number>(0);
+  const flashTRef = useRef<number>(-1);
+
+  useFrame(({ clock }) => {
+    if (!active) {
+      if (lightRef.current) lightRef.current.intensity = 0;
+      if (sheetRef.current) (sheetRef.current.material as THREE.MeshBasicMaterial).opacity = 0;
+      return;
+    }
+    const now = clock.getElapsedTime();
+    if (now > nextStrikeRef.current) {
+      flashTRef.current = now;
+      nextStrikeRef.current =
+        now + intervalRange[0] + Math.random() * (intervalRange[1] - intervalRange[0]);
+    }
+    const dt = now - flashTRef.current;
+    // Strike: short bright burst, then quick re-flash, then decay
+    let intensity = 0;
+    if (dt >= 0 && dt < 0.08) intensity = 4.5;
+    else if (dt >= 0.08 && dt < 0.16) intensity = 1.2;
+    else if (dt >= 0.16 && dt < 0.26) intensity = 3.0;
+    else if (dt >= 0.26 && dt < 0.6) intensity = 1.4 * Math.max(0, 1 - (dt - 0.26) / 0.34);
+
+    if (lightRef.current) lightRef.current.intensity = intensity;
+    if (sheetRef.current) {
+      (sheetRef.current.material as THREE.MeshBasicMaterial).opacity = Math.min(0.55, intensity * 0.12);
+    }
+  });
+
+  return (
+    <group>
+      <directionalLight ref={lightRef} position={[200, 800, -200]} color={color} intensity={0} />
+      {/* Sky sheet that brightens with the strike */}
+      <mesh ref={sheetRef} position={[0, 900, 0]} frustumCulled={false}>
+        <planeGeometry args={[6000, 6000]} />
+        <meshBasicMaterial color={color} transparent opacity={0} depthWrite={false} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  );
+}
+
 
 
 function CrisisCameraFX({ snapshot }: { snapshot: SimSnapshot }) {
@@ -2484,7 +2736,10 @@ export function CityScene(props: Props) {
     setHoveredRoadId,
     crisisPlaySeconds,
     flyTo,
+    flythrough,
+    onQualityChange,
   } = props;
+  const [quality, setQuality] = useState<"high" | "medium" | "low">("high");
   const isNight = snapshot.hour < 6.5 || snapshot.hour > 19;
   const signalTiming = 1;
 
@@ -2497,11 +2752,11 @@ export function CityScene(props: Props) {
 
   return (
     <Canvas
-      shadows
-      dpr={[1, 1.5]}
+      shadows={quality !== "low"}
+      dpr={quality === "high" ? [1, 1.5] : quality === "medium" ? [1, 1] : [0.75, 1]}
       camera={{ position: [620, 520, 620], fov: 45, near: 1, far: 6500 }}
       gl={{
-        antialias: true,
+        antialias: quality !== "low",
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 1.05,
         powerPreference: "high-performance",
@@ -2513,7 +2768,16 @@ export function CityScene(props: Props) {
       <SkyDome hour={snapshot.hour} crisis={snapshot.crisis} />
 
       {/* Stars at night — sit inside the sky dome */}
-      {isNight && <Stars radius={2400} depth={600} count={1400} factor={6} fade speed={0.4} />}
+      {isNight && quality !== "low" && (
+        <Stars
+          radius={2400}
+          depth={600}
+          count={quality === "high" ? 1400 : 700}
+          factor={6}
+          fade
+          speed={0.4}
+        />
+      )}
 
       <ambientLight intensity={isNight ? 0.28 : 0.55} />
       <hemisphereLight args={["#7090b0", "#0a0e1a", isNight ? 0.3 : 0.55]} />
@@ -2521,9 +2785,9 @@ export function CityScene(props: Props) {
         position={[480, 780, 320]}
         intensity={isNight ? 0.35 : 0.95}
         color={snapshot.crisis === "fire" ? "#ffb18a" : isNight ? "#94a3b8" : "#ffffff"}
-        castShadow
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
+        castShadow={quality === "high"}
+        shadow-mapSize-width={quality === "high" ? 1024 : 512}
+        shadow-mapSize-height={quality === "high" ? 1024 : 512}
         shadow-camera-near={100}
         shadow-camera-far={2000}
         shadow-camera-left={-700}
@@ -2543,11 +2807,11 @@ export function CityScene(props: Props) {
         hoveredRoadId={hoveredRoadId}
         setHoveredRoadId={setHoveredRoadId}
       />
-      <Trees city={city} />
+      {quality !== "low" && <Trees city={city} />}
       <Streetlights city={city} hour={snapshot.hour} />
       <BuildingsLayer city={city} snapshot={snapshot} playSec={crisisPlaySeconds} />
       <Vehicles city={city} snapshot={snapshot} />
-      <Pedestrians city={city} snapshot={snapshot} />
+      {quality === "high" && <Pedestrians city={city} snapshot={snapshot} />}
       <TrafficLights city={city} signalTiming={signalTiming} />
 
       {/* Crisis layers */}
@@ -2560,6 +2824,12 @@ export function CityScene(props: Props) {
             playSec={crisisPlaySeconds}
           />
           <EmberSparks fire={snapshot.fire} />
+          {quality !== "low" && (
+            <VolumetricSmoke
+              center={snapshot.fire.pos}
+              radius={snapshot.fire.radius}
+            />
+          )}
           <FireTrucks
             fire={snapshot.fire}
             stations={city.buildings.filter((b) => b.kind === "firestation")}
@@ -2575,6 +2845,8 @@ export function CityScene(props: Props) {
             buildings={city.buildings}
             playSec={crisisPlaySeconds}
           />
+          {/* Orange ember-flash sky pulses during fire */}
+          <LightningFlash active color="#ff9466" intervalRange={[5, 11]} />
         </>
       )}
       {snapshot.flood && (
@@ -2584,6 +2856,8 @@ export function CityScene(props: Props) {
           <FloodRipples center={snapshot.flood.pos} radius={snapshot.flood.radius} />
           <FloodDebris flood={snapshot.flood} />
           <RescueBoats flood={snapshot.flood} />
+          {/* Storm lightning during the flood */}
+          <LightningFlash active color="#cfe2ff" intervalRange={[3, 7]} />
         </>
       )}
       {snapshot.surge && (
@@ -2594,7 +2868,13 @@ export function CityScene(props: Props) {
       )}
 
       <CrisisCameraFX snapshot={snapshot} />
-      <CameraRig flyTo={flyTo} citySize={city.size} />
+      <CameraRig flyTo={flyTo} flythrough={flythrough ?? null} citySize={city.size} />
+      <AdaptiveQuality
+        onChange={(t) => {
+          setQuality(t);
+          onQualityChange?.(t);
+        }}
+      />
 
       <OrbitControls
         enableDamping
@@ -2605,16 +2885,22 @@ export function CityScene(props: Props) {
         target={[0, 0, 0]}
       />
 
-      {/* Cinematic post-processing */}
-      <EffectComposer multisampling={0}>
+      {/* Cinematic post-processing — single composer, capped passes for perf */}
+      <EffectComposer multisampling={0} enabled={quality !== "low"}>
         <Bloom
-          intensity={snapshot.crisis === "fire" ? 1.1 : 0.6}
-          luminanceThreshold={0.6}
-          luminanceSmoothing={0.2}
+          intensity={
+            snapshot.crisis === "fire"
+              ? 1.6
+              : isNight
+              ? 1.15
+              : 0.7
+          }
+          luminanceThreshold={isNight ? 0.35 : 0.55}
+          luminanceSmoothing={0.22}
           mipmapBlur
         />
-        <BrightnessContrast brightness={0.0} contrast={0.08} />
-        <Vignette eskil={false} offset={0.2} darkness={0.85} />
+        <BrightnessContrast brightness={0.0} contrast={0.1} />
+        <Vignette eskil={false} offset={0.2} darkness={0.88} />
       </EffectComposer>
     </Canvas>
   );

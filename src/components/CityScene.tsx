@@ -639,7 +639,7 @@ function Streetlights({ city, hour }: { city: CityModel; hour: number }) {
     const half = city.size / 2;
     for (let x = -half + 30; x < half; x += 60) {
       for (let z = -half + 30; z < half; z += 60) {
-        if (rnd() > 0.55) continue;
+        if (rnd() > 0.45) continue;
         const ox = (rnd() > 0.5 ? 1 : -1) * 5;
         const oz = (rnd() > 0.5 ? 1 : -1) * 5;
         out.push({ x: x + ox, z: z + oz });
@@ -648,25 +648,54 @@ function Streetlights({ city, hour }: { city: CityModel; hour: number }) {
     return out;
   }, [city.size]);
 
+  // Three instanced meshes: pole, arm, lamp head. NO per-instance pointLights —
+  // night lighting is handled by the lamp's emissive material + bloom, plus the
+  // global hemisphere/dir lights. This is the single biggest perf win.
+  const poleRef = useRef<THREE.InstancedMesh>(null);
+  const armRef = useRef<THREE.InstancedMesh>(null);
+  const lampRef = useRef<THREE.InstancedMesh>(null);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  useEffect(() => {
+    if (!poleRef.current || !armRef.current || !lampRef.current) return;
+    positions.forEach((p, i) => {
+      // pole
+      dummy.position.set(p.x, 3, p.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      poleRef.current!.setMatrixAt(i, dummy.matrix);
+      // arm
+      dummy.position.set(p.x + 0.6, 5.8, p.z);
+      dummy.updateMatrix();
+      armRef.current!.setMatrixAt(i, dummy.matrix);
+      // lamp head
+      dummy.position.set(p.x + 1.1, 5.6, p.z);
+      dummy.updateMatrix();
+      lampRef.current!.setMatrixAt(i, dummy.matrix);
+    });
+    poleRef.current.instanceMatrix.needsUpdate = true;
+    armRef.current.instanceMatrix.needsUpdate = true;
+    lampRef.current.instanceMatrix.needsUpdate = true;
+  }, [positions, dummy]);
+
+  if (positions.length === 0) return null;
+  const n = positions.length;
+
   return (
     <group>
-      {positions.map((p, i) => (
-        <group key={i} position={[p.x, 0, p.z]}>
-          <mesh position={[0, 3, 0]}>
-            <cylinderGeometry args={[0.12, 0.18, 6, 6]} />
-            <meshStandardMaterial color="#1f2937" metalness={0.6} roughness={0.5} />
-          </mesh>
-          <mesh position={[0.6, 5.8, 0]}>
-            <boxGeometry args={[1.2, 0.18, 0.3]} />
-            <meshStandardMaterial color="#1f2937" />
-          </mesh>
-          <mesh position={[1.1, 5.6, 0]}>
-            <sphereGeometry args={[0.32, 8, 8]} />
-            <meshBasicMaterial color={isNight ? "#fde68a" : "#374151"} />
-          </mesh>
-          {isNight && <pointLight position={[1.1, 5.6, 0]} color="#fde68a" intensity={0.45} distance={18} decay={2} />}
-        </group>
-      ))}
+      <instancedMesh ref={poleRef} args={[undefined, undefined, n]}>
+        <cylinderGeometry args={[0.12, 0.18, 6, 6]} />
+        <meshStandardMaterial color="#1f2937" metalness={0.6} roughness={0.5} />
+      </instancedMesh>
+      <instancedMesh ref={armRef} args={[undefined, undefined, n]}>
+        <boxGeometry args={[1.2, 0.18, 0.3]} />
+        <meshStandardMaterial color="#1f2937" />
+      </instancedMesh>
+      <instancedMesh ref={lampRef} args={[undefined, undefined, n]}>
+        <sphereGeometry args={[0.32, 8, 8]} />
+        <meshBasicMaterial color={isNight ? "#fde68a" : "#374151"} />
+      </instancedMesh>
     </group>
   );
 }

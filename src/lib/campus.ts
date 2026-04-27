@@ -231,8 +231,8 @@ function shortestPath(
   const path: string[] = [];
   const edges: string[] = [];
   let cur: string | null = to;
-  while (cur && cur !== from) {
-    const p = prev[cur];
+  while (cur !== null && cur !== from) {
+    const p: { node: string; edge: string } | null = prev[cur];
     if (!p) return null;
     path.unshift(cur);
     edges.unshift(p.edge);

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CityScene } from "@/components/CityScene";
 import { ControlPanel } from "@/components/ControlPanel";
@@ -286,6 +286,21 @@ function TwinPage() {
               </div>
             </div>
           </div>
+
+          <Link
+            to="/campus"
+            className="hud-panel rounded-lg px-3 py-2 flex items-center gap-2 hover:bg-cyan-500/10 transition-colors group"
+          >
+            <div className="w-1.5 h-1.5 rounded-full bg-cyan-300 animate-pulse" />
+            <div>
+              <div className="text-[9px] font-mono uppercase tracking-[0.25em] text-cyan-300">
+                Campus Decision Engine →
+              </div>
+              <div className="text-[10px] text-white/55 group-hover:text-white/75">
+                Graph-based twin · scenarios · explainable optimizer
+              </div>
+            </div>
+          </Link>
 
           <AIVerdict snapshot={snapshot} />
         </div>

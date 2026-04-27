@@ -13,6 +13,7 @@ import { AIVerdict } from "@/components/AIVerdict";
 import { IntroOverlay } from "@/components/IntroOverlay";
 import { IncidentCommander } from "@/components/IncidentCommander";
 import { LiveDataPanel } from "@/components/LiveDataPanel";
+import { OptimizerPanel } from "@/components/OptimizerPanel";
 import { useLiveData } from "@/hooks/useLiveData";
 import {
   buildCity,
@@ -388,6 +389,16 @@ function TwinPage() {
 
       {/* Right: Mini-map + Crisis ops + AI suggestions + forecast */}
       <aside className="absolute right-4 top-44 bottom-32 w-[360px] overflow-y-auto pointer-events-auto space-y-3">
+        <OptimizerPanel
+          city={city}
+          controls={controls}
+          crisis={crisis}
+          tMinutes={tMinutes}
+          baseHour={BASE_HOUR}
+          crisisStartMin={crisisStartMin}
+          onApply={applySuggestion}
+        />
+
         <MiniMap
           city={city}
           snapshot={snapshot}

@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { CampusMap } from "@/components/CampusMap";
+import { CampusAIStrategist } from "@/components/CampusAIStrategist";
 import {
   buildCampus,
   simulateCampus,

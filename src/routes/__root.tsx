@@ -29,14 +29,18 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Lovable App" },
-      { name: "description", content: "Lovable Generated Project" },
+      { title: "CitySynth" },
+      { name: "description", content: "CitySynth is a real-time urban decision engine that combines a digital twin, simulation, and AI-driven optimization to address congestion and planning challenge" },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Lovable App" },
-      { property: "og:description", content: "Lovable Generated Project" },
+      { property: "og:title", content: "CitySynth" },
+      { property: "og:description", content: "CitySynth is a real-time urban decision engine that combines a digital twin, simulation, and AI-driven optimization to address congestion and planning challenge" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "CitySynth" },
+      { name: "twitter:description", content: "CitySynth is a real-time urban decision engine that combines a digital twin, simulation, and AI-driven optimization to address congestion and planning challenge" },
+      { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/attachments/og-images/6454121f-867c-4ed4-8629-7f7f64b09ad5" },
+      { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/attachments/og-images/6454121f-867c-4ed4-8629-7f7f64b09ad5" },
     ],
     links: [
       {

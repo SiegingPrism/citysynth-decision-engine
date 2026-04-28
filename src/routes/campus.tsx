@@ -270,6 +270,14 @@ function CampusPage() {
           )}
         </Panel>
 
+        <CampusAIStrategist
+          campus={campus}
+          scenario={scenario}
+          baseline={baseline}
+          optimization={optimization}
+          demandMultiplier={demandMul}
+        />
+
         {optimization && (
           <Panel icon={<Activity className="w-3 h-3" />} title="Before vs After" accent="emerald">
             <div className="space-y-3">

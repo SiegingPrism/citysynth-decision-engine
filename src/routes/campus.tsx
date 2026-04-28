@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { CampusMap } from "@/components/CampusMap";
+import { CampusAIStrategist } from "@/components/CampusAIStrategist";
 import {
   buildCampus,
   simulateCampus,
@@ -268,6 +269,14 @@ function CampusPage() {
             </div>
           )}
         </Panel>
+
+        <CampusAIStrategist
+          campus={campus}
+          scenario={scenario}
+          baseline={baseline}
+          optimization={optimization}
+          demandMultiplier={demandMul}
+        />
 
         {optimization && (
           <Panel icon={<Activity className="w-3 h-3" />} title="Before vs After" accent="emerald">

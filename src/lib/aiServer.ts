@@ -306,3 +306,132 @@ Nearest stations: ${data.nearestStations.map((s) => `${s.label} @ ${s.distance.t
       return { plan: null, error: err instanceof Error ? err.message : "Unknown error" };
     }
   });
+
+/* ============== CAMPUS AI STRATEGIST (Gemini) ============== */
+
+type CampusStrategistInput = {
+  scenario: { id: string; label: string; description: string; timeLabel: string };
+  baseline: {
+    congestion: number;
+    avgDelaySec: number;
+    flowEfficiency: number;
+    bottlenecks: { name: string; vc: number }[];
+  };
+  optimized?: {
+    congestion: number;
+    avgDelaySec: number;
+    flowEfficiency: number;
+  };
+  plan?: {
+    description: string[];
+    closedEdges: string[];
+    rerouteShare: number;
+    signalRetimes: { edge: string; weight: number }[];
+  };
+  improvement?: {
+    congestionDropPct: number;
+    delayDropPct: number;
+    flowGainPct: number;
+  };
+  demandMultiplier: number;
+};
+
+const CAMPUS_SYSTEM = `You are the AI Strategist for a campus traffic Digital Twin.
+Given a scenario, baseline metrics, optionally an optimized plan, produce a SHARP, NUMERIC narrative for a hackathon judge.
+
+Return:
+- diagnosis: 1-2 sentences on WHY congestion is forming (cite the worst bottleneck and v/c).
+- strategy: 2-3 sentences explaining the recommended actions in plain English (signal retimes, reroutes, closures).
+- impact: 1 sentence with concrete deltas (e.g. "cuts congestion 28%, delay 4.1s → 2.3s").
+- risks: 1 short sentence on tradeoffs (e.g. side-street spillover).
+- talking_points: 3 bullet phrases (max 12 words each) judges will remember.
+- confidence: 0..1.
+
+Be operational, numeric, no fluff. If no optimization yet, omit impact/risks and frame strategy as a recommendation.`;
+
+export const campusStrategist = createServerFn({ method: "POST" })
+  .inputValidator((data: CampusStrategistInput) => data)
+  .handler(async ({ data }) => {
+    const apiKey = process.env.LOVABLE_API_KEY;
+    if (!apiKey) return { analysis: null, error: "AI key not configured" };
+
+    const userMsg = `SCENARIO: ${data.scenario.label} (${data.scenario.timeLabel}) — ${data.scenario.description}
+Demand multiplier: ×${data.demandMultiplier.toFixed(2)}
+
+BASELINE:
+- congestion: ${(data.baseline.congestion * 100).toFixed(0)}%
+- avg delay: ${data.baseline.avgDelaySec.toFixed(1)}s
+- flow efficiency: ${(data.baseline.flowEfficiency * 100).toFixed(0)}%
+- top bottlenecks: ${data.baseline.bottlenecks.map(b => `${b.name} v/c=${b.vc.toFixed(2)}`).join(", ") || "none"}
+
+${data.optimized ? `OPTIMIZED:
+- congestion: ${(data.optimized.congestion * 100).toFixed(0)}%
+- avg delay: ${data.optimized.avgDelaySec.toFixed(1)}s
+- flow efficiency: ${(data.optimized.flowEfficiency * 100).toFixed(0)}%
+- improvements: congestion ↓${data.improvement?.congestionDropPct.toFixed(0)}%, delay ↓${data.improvement?.delayDropPct.toFixed(0)}%, flow ↑${data.improvement?.flowGainPct.toFixed(0)}%
+
+PLAN:
+${data.plan?.description.map((d, i) => `${i + 1}. ${d}`).join("\n")}
+- closures: ${data.plan?.closedEdges.join(", ") || "none"}
+- reroute share: ${((data.plan?.rerouteShare ?? 0) * 100).toFixed(0)}%
+- signal retimes: ${data.plan?.signalRetimes.map(r => `${r.edge}×${r.weight.toFixed(2)}`).join(", ") || "none"}` : `(No optimization run yet — recommend a plan.)`}`;
+
+    try {
+      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "google/gemini-3-flash-preview",
+          messages: [
+            { role: "system", content: CAMPUS_SYSTEM },
+            { role: "user", content: userMsg },
+          ],
+          tools: [{
+            type: "function",
+            function: {
+              name: "submit_analysis",
+              description: "Return campus strategist analysis.",
+              parameters: {
+                type: "object",
+                properties: {
+                  diagnosis: { type: "string" },
+                  strategy: { type: "string" },
+                  impact: { type: "string" },
+                  risks: { type: "string" },
+                  talking_points: {
+                    type: "array",
+                    minItems: 3,
+                    maxItems: 3,
+                    items: { type: "string" },
+                  },
+                  confidence: { type: "number" },
+                },
+                required: ["diagnosis", "strategy", "talking_points", "confidence"],
+                additionalProperties: false,
+              },
+            },
+          }],
+          tool_choice: { type: "function", function: { name: "submit_analysis" } },
+        }),
+      });
+
+      if (!res.ok) {
+        if (res.status === 429) return { analysis: null, error: "Rate limit reached. Try again shortly." };
+        if (res.status === 402) return { analysis: null, error: "AI credits exhausted. Add funds in Workspace → Usage." };
+        const text = await res.text();
+        console.error("campusStrategist error", res.status, text);
+        return { analysis: null, error: `AI gateway error (${res.status})` };
+      }
+
+      const json = await res.json();
+      const call = json.choices?.[0]?.message?.tool_calls?.[0];
+      const args = call?.function?.arguments ? JSON.parse(call.function.arguments) : null;
+      return { analysis: args, error: null };
+    } catch (err) {
+      console.error("campusStrategist failed", err);
+      return { analysis: null, error: err instanceof Error ? err.message : "Unknown error" };
+    }
+  });
